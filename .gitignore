@@ -1,1 +1,26 @@
 .vercel
+
+# Dependencies
+node_modules/
+
+# Environment variables (contains secrets)
+.env
+
+# Database files (SQLite)
+*.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build output
+dist/
+build/

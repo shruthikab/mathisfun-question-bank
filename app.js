@@ -716,6 +716,13 @@ const loadRole = () => {
 };
 
 const init = async () => {
+  // Check if user is authenticated first
+  const token = localStorage.getItem('mathquest-auth-token');
+  if (!token) {
+    // Auth module will handle showing login screen
+    return;
+  }
+
   loadImportedData();
   loadRole();
   setRole(state.role);
@@ -805,4 +812,5 @@ aiImportBtn.addEventListener("click", handleAiImport);
 clearImportedBtn.addEventListener("click", clearImportedQuestions);
 exportCombinedBtn.addEventListener("click", exportCombinedQuestions);
 
-init();
+// Export init function for auth.js to call
+window.init = init;
