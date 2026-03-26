@@ -8,6 +8,30 @@
   ],
   "routes": [
     {
+      "src": "/styles.css",
+      "dest": "styles.css"
+    },
+    {
+      "src": "/auth.js",
+      "dest": "auth.js"
+    },
+    {
+      "src": "/app.js",
+      "dest": "app.js"
+    },
+    {
+      "src": "/config-data.js",
+      "dest": "config-data.js"
+    },
+    {
+      "src": "/solutions.js",
+      "dest": "solutions.js"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "server.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "server.js"
     }
