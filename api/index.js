@@ -1,10 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const session = require('express-session');
-const passport = require('passport');
 const path = require('path');
-const authRoutes = require('./auth');
-const importQuestionsRoutes = require('./import-questions');
 const serverless = require('serverless-http');
 
 const app = express();
@@ -27,20 +24,34 @@ app.use(session({
   },
 }));
 
-// Passport
-app.use(passport.initialize());
-app.use(passport.session());
-
 // Static files - serve from parent directory
 app.use(express.static(path.join(__dirname, '..')));
-
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/import-questions', importQuestionsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// Auth routes - load passport inside to handle missing env gracefully
+app.use('/api/auth', (req, res, next) => {
+  try {
+    const authRoutes = require('./auth');
+    authRoutes(req, res, next);
+  } catch (error) {
+    console.error('Auth routes error:', error);
+    next(error);
+  }
+});
+
+// Import questions routes
+app.use('/api/import-questions', (req, res, next) => {
+  try {
+    const importRoutes = require('./import-questions');
+    importRoutes(req, res, next);
+  } catch (error) {
+    console.error('Import routes error:', error);
+    next(error);
+  }
 });
 
 // Catch-all - serve index.html for SPA

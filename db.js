@@ -1,10 +1,9 @@
-const { Pool } = require('pg');
-
-let pool;
+let pool = null;
 let isConnected = false;
 
-// Only create pool if DATABASE_URL is provided
+// Only load pg and create pool if DATABASE_URL is provided
 if (process.env.DATABASE_URL) {
+  const { Pool } = require('pg');
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
   });
@@ -31,7 +30,6 @@ async function initializeDatabase() {
   }
 
   try {
-    // Create users table if it doesn't exist
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -45,7 +43,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // Add google_id column if it doesn't exist (for existing databases)
     await pool.query(`
       DO $$
       BEGIN
@@ -61,12 +58,10 @@ async function initializeDatabase() {
           ALTER TABLE users ADD COLUMN password_hash VARCHAR(255);
         END IF;
 
-        -- Make password_hash nullable for Google OAuth users
         ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
       END $$
     `);
 
-    // Create indexes
     await pool.query('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)');
 
@@ -78,5 +73,6 @@ async function initializeDatabase() {
 
 module.exports = {
   pool,
+  isConnected,
   initializeDatabase,
 };
