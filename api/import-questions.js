@@ -1,9 +1,7 @@
-module.exports = async (req, res) => {
-  if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
+const express = require('express');
+const router = express.Router();
 
+router.post('/', async (req, res) => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     res.status(500).json({ error: "OPENAI_API_KEY is not configured on the server." });
@@ -93,4 +91,6 @@ module.exports = async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: String(error.message || error) });
   }
-};
+});
+
+module.exports = router;
