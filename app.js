@@ -26,6 +26,11 @@ const state = {
   skillCheckScore: 0,
   skillCheckTimeRemaining: 0,
   skillCheckTimerHandle: null,
+  // Do It Together state
+  doItTogetherActive: false,
+  doItTogetherSteps: [],
+  doItTogetherStepIndex: 0,
+  doItTogetherMode: "quick", // "quick" or "skill"
   // Progress tracking
   progress: {
     totalAnswered: 0,
@@ -887,6 +892,12 @@ const startQuickPractice = () => {
     }
   });
 
+  document.getElementById("qpDoItTogetherBtn")?.addEventListener("click", () => {
+    if (quickPracticeQuestion) {
+      startDoItTogether("quick", quickPracticeQuestion);
+    }
+  });
+
   document.getElementById("qpSubmitBtn")?.addEventListener("click", submitQuickPracticeAnswer);
   document.getElementById("qpAnswerInput")?.addEventListener("keypress", (e) => {
     if (e.key === "Enter") submitQuickPracticeAnswer();
@@ -1072,6 +1083,13 @@ const startSkillCheck = (category) => {
     }
   });
 
+  document.getElementById("scDoItTogetherBtn")?.addEventListener("click", () => {
+    const currentQuestion = skillCheckQuestions[state.skillCheckIndex];
+    if (currentQuestion) {
+      startDoItTogether("skill", currentQuestion);
+    }
+  });
+
   document.getElementById("scSubmitBtn")?.addEventListener("click", submitSkillCheckAnswer);
   document.getElementById("scAnswerInput")?.addEventListener("keypress", (e) => {
     if (e.key === "Enter") submitSkillCheckAnswer();
@@ -1182,6 +1200,203 @@ const endSkillCheck = () => {
   document.getElementById("scFinalScore").textContent = `${state.skillCheckScore}/${skillCheckQuestions.length}`;
   const accuracy = Math.round((state.skillCheckScore / skillCheckQuestions.length) * 100);
   document.getElementById("scFinalAccuracy").textContent = `${accuracy}%`;
+};
+
+// ============= DO IT TOGETHER =============
+
+const parseSolutionSteps = (solutionText) => {
+  if (!solutionText) return [];
+
+  const steps = [];
+  const lines = solutionText.split("\n");
+
+  let currentStep = { title: "", text: "" };
+  let stepNumber = 1;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Check for step markers
+    if (trimmed.match(/^(Step \d+:|\d+\.\s|\- |\* )/) || trimmed.match(/^(Use |Convert |Set |Solve |Find |Calculate |Compute |Check |Let |Work |Put |Model)/i)) {
+      if (currentStep.text) {
+        steps.push({ ...currentStep, title: `Step ${stepNumber}` });
+        stepNumber++;
+      }
+      currentStep = { title: `Step ${stepNumber}`, text: trimmed };
+    } else {
+      currentStep.text += "\n" + trimmed;
+    }
+  }
+
+  if (currentStep.text) {
+    steps.push({ ...currentStep, title: `Step ${stepNumber}` });
+  }
+
+  // If we only have one step, split by sentences
+  if (steps.length === 1 && steps[0].text.includes(".")) {
+    const sentences = steps[0].text.split(".").filter(s => s.trim());
+    if (sentences.length > 1) {
+      const newSteps = [];
+      sentences.forEach((sentence, idx) => {
+        const trimmedSentence = sentence.trim() + ".";
+        newSteps.push({
+          title: `Step ${idx + 1}`,
+          text: trimmedSentence
+        });
+      });
+      return newSteps;
+    }
+  }
+
+  return steps;
+};
+
+const startDoItTogether = (mode, question) => {
+  state.doItTogetherActive = true;
+  state.doItTogetherMode = mode;
+  state.doItTogetherStepIndex = 0;
+
+  const solutionText = solutionMap[question.id] || `Method:\n${question.hint}\n\nFinal answer: ${question.answer}`;
+  state.doItTogetherSteps = parseSolutionSteps(solutionText);
+
+  // Ensure we have at least 3 steps
+  if (state.doItTogetherSteps.length < 3) {
+    state.doItTogetherSteps = [
+      { title: "Step 1: Understand", text: `Read the problem carefully. ${question.question}` },
+      { title: "Step 2: Plan", text: question.hint || "Think about what approach to use." },
+      { title: "Step 3: Solve", text: `Work through the solution. ${solutionText}` },
+      { title: "Step 4: Check", text: `Verify your answer. The answer is: ${question.answer}` },
+    ];
+  }
+
+  // Add final answer step if not present
+  const lastStep = state.doItTogetherSteps[state.doItTogetherSteps.length - 1];
+  if (!lastStep.text.includes(question.answer)) {
+    state.doItTogetherSteps.push({
+      title: `Step ${state.doItTogetherSteps.length + 1}: Answer`,
+      text: `Final answer: ${question.answer}`
+    });
+  }
+
+  // Hide main panels
+  document.getElementById("quickPracticePanel")?.classList.add("hidden");
+  document.getElementById("skillCheckActivePanel")?.classList.add("hidden");
+  document.getElementById("doItTogetherPanel")?.classList.remove("hidden");
+
+  // Setup UI
+  document.getElementById("ditQuestionText").innerHTML = formatMath(question.question);
+  document.getElementById("ditCategoryDisplay").textContent = question.category;
+
+  // Setup button handlers
+  document.getElementById("ditExitBtn")?.addEventListener("click", () => {
+    exitDoItTogether();
+  });
+
+  document.getElementById("ditPrevStepBtn")?.addEventListener("click", () => {
+    if (state.doItTogetherStepIndex > 0) {
+      state.doItTogetherStepIndex--;
+      showDoItTogetherStep();
+    }
+  });
+
+  document.getElementById("ditNextStepBtn")?.addEventListener("click", () => {
+    if (state.doItTogetherStepIndex < state.doItTogetherSteps.length - 1) {
+      state.doItTogetherStepIndex++;
+      showDoItTogetherStep();
+    }
+  });
+
+  document.getElementById("ditSubmitBtn")?.addEventListener("click", () => {
+    submitDoItTogetherAnswer(question);
+  });
+
+  document.getElementById("ditAnswerInput")?.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") submitDoItTogetherAnswer(question);
+  });
+
+  showDoItTogetherStep();
+};
+
+const showDoItTogetherStep = () => {
+  const step = state.doItTogetherSteps[state.doItTogetherStepIndex];
+  if (!step) return;
+
+  document.getElementById("ditStepTitle").textContent = step.title;
+  document.getElementById("ditStepText").innerHTML = formatMath(step.text.replace(/\n/g, "<br>"));
+  document.getElementById("ditStepIndicator").textContent = `Step ${state.doItTogetherStepIndex + 1} of ${state.doItTogetherSteps.length}`;
+
+  // Update progress dots
+  const progressContainer = document.getElementById("ditStepProgress");
+  if (progressContainer) {
+    progressContainer.innerHTML = state.doItTogetherSteps.map((_, idx) =>
+      `<div class="solution-step-progress__dot ${idx === state.doItTogetherStepIndex ? "active" : ""} ${idx < state.doItTogetherStepIndex ? "completed" : ""}"></div>`
+    ).join("");
+  }
+
+  // Update button states
+  document.getElementById("ditPrevStepBtn").disabled = state.doItTogetherStepIndex === 0;
+  document.getElementById("ditNextStepBtn").disabled = state.doItTogetherStepIndex === state.doItTogetherSteps.length - 1;
+
+  // Show answer input on last step
+  const isLastStep = state.doItTogetherStepIndex === state.doItTogetherSteps.length - 1;
+  const answerPanel = document.getElementById("ditAnswerPanel");
+  if (answerPanel) {
+    answerPanel.classList.toggle("hidden", !isLastStep);
+  }
+
+  if (isLastStep) {
+    document.getElementById("ditAnswerInput").value = "";
+    document.getElementById("ditFeedback").classList.add("hidden");
+    document.getElementById("ditAnswerInput").focus();
+  }
+};
+
+const submitDoItTogetherAnswer = (question) => {
+  const input = document.getElementById("ditAnswerInput").value.trim().toLowerCase();
+  if (!input) return;
+
+  const correct = normalizeAnswer(input) === normalizeAnswer(question.answer);
+
+  const feedback = document.getElementById("ditFeedback");
+  feedback.classList.remove("hidden");
+  if (correct) {
+    feedback.className = "result-feedback correct";
+    feedback.innerHTML = `✓ Correct! Great job working through it together!`;
+    recordAnswer(true, question.category);
+
+    // Update score if in quick practice mode
+    if (state.doItTogetherMode === "quick") {
+      state.quickPracticeTotal++;
+      state.quickPracticeScore++;
+      state.quickPracticeStreak++;
+      if (state.quickPracticeStreak > state.quickPracticeBestStreak) {
+        state.quickPracticeBestStreak = state.quickPracticeStreak;
+      }
+      updateQuickPracticeScore();
+    }
+  } else {
+    feedback.className = "result-feedback incorrect";
+    feedback.innerHTML = `✗ Not quite. The answer was: <strong>${question.answer}</strong>`;
+    recordAnswer(false, question.category);
+
+    if (state.doItTogetherMode === "quick") {
+      state.quickPracticeTotal++;
+      state.quickPracticeStreak = 0;
+      updateQuickPracticeScore();
+    }
+  }
+};
+
+const exitDoItTogether = () => {
+  state.doItTogetherActive = false;
+  document.getElementById("doItTogetherPanel")?.classList.add("hidden");
+
+  if (state.doItTogetherMode === "quick") {
+    document.getElementById("quickPracticePanel")?.classList.remove("hidden");
+  } else {
+    document.getElementById("skillCheckActivePanel")?.classList.remove("hidden");
+  }
 };
 
 // ============= PROGRESS =============
