@@ -31,6 +31,7 @@ const state = {
   doItTogetherSteps: [],
   doItTogetherStepIndex: 0,
   doItTogetherMode: "quick", // "quick" or "skill"
+  doItTogetherRevealed: {}, // Track revealed steps per question
   // Progress tracking
   progress: {
     totalAnswered: 0,
@@ -918,6 +919,19 @@ const showQuickPracticeQuestion = () => {
   document.getElementById("qpAnswerInput").focus();
   document.getElementById("qpPrevBtn").disabled = quickPracticeQuestionIndex === 0;
   quickPracticeAnswerTime = Date.now();
+
+  // Update Do It Together button to show if there's saved progress
+  const ditBtn = document.getElementById("qpDoItTogetherBtn");
+  if (ditBtn) {
+    const savedProgress = loadDoItTogetherProgress(quickPracticeQuestion.id);
+    if (savedProgress && savedProgress.stepIndex > 0) {
+      ditBtn.textContent = `Continue Guidance (Step ${savedProgress.stepIndex + 1})`;
+      ditBtn.style.borderColor = "var(--success)";
+    } else {
+      ditBtn.textContent = "Do It Together";
+      ditBtn.style.borderColor = "";
+    }
+  }
 };
 
 const loadQuickPracticeQuestion = () => {
@@ -1144,6 +1158,19 @@ const showSkillCheckQuestion = () => {
   document.getElementById("scPrevBtn").disabled = state.skillCheckIndex === 0;
   document.getElementById("scNextBtn").disabled = state.skillCheckIndex === skillCheckQuestions.length - 1;
 
+  // Update Do It Together button to show if there's saved progress
+  const ditBtn = document.getElementById("scDoItTogetherBtn");
+  if (ditBtn) {
+    const savedProgress = loadDoItTogetherProgress(q.id);
+    if (savedProgress && savedProgress.stepIndex > 0) {
+      ditBtn.textContent = `Continue (Step ${savedProgress.stepIndex + 1})`;
+      ditBtn.style.borderColor = "var(--success)";
+    } else {
+      ditBtn.textContent = "Do It Together";
+      ditBtn.style.borderColor = "";
+    }
+  }
+
   // If already answered, show the feedback
   if (skillCheckAnswers[state.skillCheckIndex] !== undefined) {
     const feedback = document.getElementById("scFeedback");
@@ -1210,7 +1237,7 @@ const parseSolutionSteps = (solutionText) => {
   const steps = [];
   const lines = solutionText.split("\n");
 
-  let currentStep = { title: "", text: "" };
+  let currentStep = { title: "", text: "", blanks: [] };
   let stepNumber = 1;
 
   for (const line of lines) {
@@ -1223,7 +1250,7 @@ const parseSolutionSteps = (solutionText) => {
         steps.push({ ...currentStep, title: `Step ${stepNumber}` });
         stepNumber++;
       }
-      currentStep = { title: `Step ${stepNumber}`, text: trimmed };
+      currentStep = { title: `Step ${stepNumber}`, text: trimmed, blanks: [] };
     } else {
       currentStep.text += "\n" + trimmed;
     }
@@ -1242,20 +1269,54 @@ const parseSolutionSteps = (solutionText) => {
         const trimmedSentence = sentence.trim() + ".";
         newSteps.push({
           title: `Step ${idx + 1}`,
-          text: trimmedSentence
+          text: trimmedSentence,
+          blanks: extractBlanks(trimmedSentence)
         });
       });
       return newSteps;
     }
   }
 
-  return steps;
+  // Extract blanks from each step
+  return steps.map(step => ({
+    ...step,
+    blanks: extractBlanks(step.text)
+  }));
 };
+
+const extractBlanks = (text) => {
+  const blanks = [];
+  // Find numbers and key values that can be blanks
+  const numberRegex = /\b(\d+(?:\/\d+)?|\d+\/\d+)\b/g;
+  let match;
+  while ((match = numberRegex.exec(text)) !== null) {
+    if (!text.substring(0, match.index).includes("Answer:") &&
+        !text.substring(0, match.index).includes("Step")) {
+      blanks.push({
+        value: match[1],
+        position: match.index
+      });
+    }
+  }
+  return blanks.slice(0, 3); // Limit to 3 blanks per step
+};
+
+let doItTogetherCurrentQuestion = null;
 
 const startDoItTogether = (mode, question) => {
   state.doItTogetherActive = true;
   state.doItTogetherMode = mode;
   state.doItTogetherStepIndex = 0;
+  doItTogetherCurrentQuestion = question;
+
+  // Load saved progress for this question
+  const savedProgress = loadDoItTogetherProgress(question.id);
+  if (savedProgress) {
+    state.doItTogetherStepIndex = savedProgress.stepIndex || 0;
+    state.doItTogetherRevealed = savedProgress.revealed || {};
+  } else {
+    state.doItTogetherRevealed = {};
+  }
 
   const solutionText = solutionMap[question.id] || `Method:\n${question.hint}\n\nFinal answer: ${question.answer}`;
   state.doItTogetherSteps = parseSolutionSteps(solutionText);
@@ -1263,10 +1324,10 @@ const startDoItTogether = (mode, question) => {
   // Ensure we have at least 3 steps
   if (state.doItTogetherSteps.length < 3) {
     state.doItTogetherSteps = [
-      { title: "Step 1: Understand", text: `Read the problem carefully. ${question.question}` },
-      { title: "Step 2: Plan", text: question.hint || "Think about what approach to use." },
-      { title: "Step 3: Solve", text: `Work through the solution. ${solutionText}` },
-      { title: "Step 4: Check", text: `Verify your answer. The answer is: ${question.answer}` },
+      { title: "Step 1: Understand", text: `Read the problem carefully. ${question.question}`, blanks: [] },
+      { title: "Step 2: Plan", text: question.hint || "Think about what approach to use.", blanks: [] },
+      { title: "Step 3: Solve", text: `Work through the solution. ${solutionText}`, blanks: extractBlanks(solutionText) },
+      { title: "Step 4: Check", text: `Verify your answer. The answer is: ${question.answer}`, blanks: [] },
     ];
   }
 
@@ -1275,7 +1336,8 @@ const startDoItTogether = (mode, question) => {
   if (!lastStep.text.includes(question.answer)) {
     state.doItTogetherSteps.push({
       title: `Step ${state.doItTogetherSteps.length + 1}: Answer`,
-      text: `Final answer: ${question.answer}`
+      text: `Final answer: ${question.answer}`,
+      blanks: []
     });
   }
 
@@ -1288,43 +1350,151 @@ const startDoItTogether = (mode, question) => {
   document.getElementById("ditQuestionText").innerHTML = formatMath(question.question);
   document.getElementById("ditCategoryDisplay").textContent = question.category;
 
+  // Update toggle button text
+  updateToggleModeButton();
+
   // Setup button handlers
-  document.getElementById("ditExitBtn")?.addEventListener("click", () => {
-    exitDoItTogether();
-  });
+  document.getElementById("ditExitBtn")?.removeEventListener("click", exitDoItTogether);
+  document.getElementById("ditPrevStepBtn")?.removeEventListener("click", handleDitPrevStep);
+  document.getElementById("ditNextStepBtn")?.removeEventListener("click", handleDitNextStep);
+  document.getElementById("ditToggleModeBtn")?.removeEventListener("click", toggleDoItTogetherMode);
+  document.getElementById("ditRevealBtn")?.removeEventListener("click", revealCurrentStep);
+  document.getElementById("ditSubmitBtn")?.removeEventListener("click", handleDitSubmit);
+  document.getElementById("ditAnswerInput")?.removeEventListener("keypress", handleDitKeyPress);
 
-  document.getElementById("ditPrevStepBtn")?.addEventListener("click", () => {
-    if (state.doItTogetherStepIndex > 0) {
-      state.doItTogetherStepIndex--;
-      showDoItTogetherStep();
-    }
-  });
-
-  document.getElementById("ditNextStepBtn")?.addEventListener("click", () => {
-    if (state.doItTogetherStepIndex < state.doItTogetherSteps.length - 1) {
-      state.doItTogetherStepIndex++;
-      showDoItTogetherStep();
-    }
-  });
-
-  document.getElementById("ditSubmitBtn")?.addEventListener("click", () => {
-    submitDoItTogetherAnswer(question);
-  });
-
-  document.getElementById("ditAnswerInput")?.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") submitDoItTogetherAnswer(question);
-  });
+  document.getElementById("ditExitBtn")?.addEventListener("click", exitDoItTogether);
+  document.getElementById("ditPrevStepBtn")?.addEventListener("click", handleDitPrevStep);
+  document.getElementById("ditNextStepBtn")?.addEventListener("click", handleDitNextStep);
+  document.getElementById("ditToggleModeBtn")?.addEventListener("click", toggleDoItTogetherMode);
+  document.getElementById("ditRevealBtn")?.addEventListener("click", revealCurrentStep);
+  document.getElementById("ditSubmitBtn")?.addEventListener("click", handleDitSubmit);
+  document.getElementById("ditAnswerInput")?.addEventListener("keypress", handleDitKeyPress);
 
   showDoItTogetherStep();
+};
+
+const updateToggleModeButton = () => {
+  const btn = document.getElementById("ditToggleModeBtn");
+  if (btn) {
+    btn.textContent = state.doItTogetherMode === "quick" ? "Try Myself" : "Show Me How";
+  }
+};
+
+const handleDitPrevStep = () => {
+  if (state.doItTogetherStepIndex > 0) {
+    state.doItTogetherStepIndex--;
+    showDoItTogetherStep();
+    saveDoItTogetherProgress();
+  }
+};
+
+const handleDitNextStep = () => {
+  if (state.doItTogetherStepIndex < state.doItTogetherSteps.length - 1) {
+    state.doItTogetherStepIndex++;
+    showDoItTogetherStep();
+    saveDoItTogetherProgress();
+  }
+};
+
+const handleDitSubmit = () => {
+  if (doItTogetherCurrentQuestion) {
+    submitDoItTogetherAnswer(doItTogetherCurrentQuestion);
+  }
+};
+
+const handleDitKeyPress = (e) => {
+  if (e.key === "Enter" && doItTogetherCurrentQuestion) {
+    submitDoItTogetherAnswer(doItTogetherCurrentQuestion);
+  }
+};
+
+const toggleDoItTogetherMode = () => {
+  if (!doItTogetherCurrentQuestion) return;
+
+  // Save current progress before switching
+  saveDoItTogetherProgress();
+
+  if (state.doItTogetherMode === "quick") {
+    // Switch to Try Myself mode - go back to quick practice at same question
+    const currentIndex = quickPracticeQuestions.findIndex(q => q.id === doItTogetherCurrentQuestion.id);
+    if (currentIndex >= 0) {
+      quickPracticeQuestionIndex = currentIndex;
+      quickPracticeQuestion = quickPracticeQuestions[currentIndex];
+    }
+    exitDoItTogether();
+  } else {
+    // Switch to Show Me How mode - come back to DIT with saved progress
+    startDoItTogether("quick", doItTogetherCurrentQuestion);
+  }
+};
+
+const revealCurrentStep = () => {
+  const stepIndex = state.doItTogetherStepIndex;
+  state.doItTogetherRevealed[stepIndex] = true;
+  showDoItTogetherStep();
+  saveDoItTogetherProgress();
+};
+
+const saveDoItTogetherProgress = () => {
+  if (!doItTogetherCurrentQuestion) return;
+
+  const progress = {
+    stepIndex: state.doItTogetherStepIndex,
+    revealed: state.doItTogetherRevealed,
+    timestamp: Date.now()
+  };
+  localStorage.setItem(`dit-progress-${doItTogetherCurrentQuestion.id}`, JSON.stringify(progress));
+};
+
+const loadDoItTogetherProgress = (questionId) => {
+  try {
+    const saved = localStorage.getItem(`dit-progress-${questionId}`);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error("Failed to load DIT progress:", e);
+  }
+  return null;
+};
+
+const clearDoItTogetherProgress = () => {
+  if (!doItTogetherCurrentQuestion) return;
+  localStorage.removeItem(`dit-progress-${doItTogetherCurrentQuestion.id}`);
 };
 
 const showDoItTogetherStep = () => {
   const step = state.doItTogetherSteps[state.doItTogetherStepIndex];
   if (!step) return;
 
+  const isRevealed = state.doItTogetherRevealed[state.doItTogetherStepIndex];
+  const hasBlanks = step.blanks && step.blanks.length > 0;
+
   document.getElementById("ditStepTitle").textContent = step.title;
-  document.getElementById("ditStepText").innerHTML = formatMath(step.text.replace(/\n/g, "<br>"));
+  document.getElementById("ditStepIcon").textContent = getIconForStep(state.doItTogetherStepIndex);
   document.getElementById("ditStepIndicator").textContent = `Step ${state.doItTogetherStepIndex + 1} of ${state.doItTogetherSteps.length}`;
+
+  // Render step text with LaTeX formatting
+  let stepContent = formatMath(step.text.replace(/\n/g, "<br>"));
+
+  // Replace blanks with input fields or placeholders
+  if (hasBlanks && !isRevealed) {
+    step.blanks.forEach((blank, idx) => {
+      const blankHtml = `<input type="text" class="blank-input" data-blank-idx="${idx}" data-value="${blank.value}" placeholder="?" />`;
+      stepContent = stepContent.replace(blank.value, blankHtml);
+    });
+    document.getElementById("ditStepText").innerHTML = stepContent;
+
+    // Setup blank input handlers
+    document.querySelectorAll(".blank-input").forEach((input) => {
+      input.addEventListener("change", (e) => checkBlankAnswer(e));
+      input.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") checkBlankAnswer(e);
+      });
+    });
+  } else {
+    document.getElementById("ditStepText").innerHTML = stepContent;
+  }
 
   // Update progress dots
   const progressContainer = document.getElementById("ditStepProgress");
@@ -1337,6 +1507,29 @@ const showDoItTogetherStep = () => {
   // Update button states
   document.getElementById("ditPrevStepBtn").disabled = state.doItTogetherStepIndex === 0;
   document.getElementById("ditNextStepBtn").disabled = state.doItTogetherStepIndex === state.doItTogetherSteps.length - 1;
+
+  // Show/hide reveal button
+  const revealBtn = document.getElementById("ditRevealBtn");
+  const actionsContainer = document.getElementById("ditStepActions");
+  if (revealBtn && actionsContainer) {
+    if (hasBlanks && !isRevealed) {
+      actionsContainer.classList.remove("hidden");
+      revealBtn.textContent = "Reveal This Step";
+      revealBtn.disabled = false;
+    } else if (!isRevealed) {
+      actionsContainer.classList.remove("hidden");
+      revealBtn.textContent = "Reveal";
+      revealBtn.disabled = false;
+    } else {
+      actionsContainer.classList.add("hidden");
+    }
+  }
+
+  // Show/hide blanks container
+  const blanksContainer = document.getElementById("ditStepBlanks");
+  if (blanksContainer) {
+    blanksContainer.classList.toggle("hidden", !hasBlanks || isRevealed);
+  }
 
   // Show answer input on last step
   const isLastStep = state.doItTogetherStepIndex === state.doItTogetherSteps.length - 1;
@@ -1352,6 +1545,41 @@ const showDoItTogetherStep = () => {
   }
 };
 
+const getIconForStep = (index) => {
+  const icons = ["🧠", "💡", "✏️", "🔢", "✅", "🎯", "⭐", "📝"];
+  return icons[index % icons.length];
+};
+
+const checkBlankAnswer = (e) => {
+  const input = e.target;
+  const expectedValue = input.dataset.value;
+  const userValue = normalizeAnswer(input.value);
+  const expectedNormalized = normalizeAnswer(expectedValue);
+
+  if (userValue === expectedNormalized) {
+    input.style.borderColor = "var(--success)";
+    input.style.background = "rgba(158, 206, 106, 0.15)";
+    input.disabled = true;
+
+    // Check if all blanks are filled
+    const allBlanks = document.querySelectorAll(".blank-input");
+    const allCorrect = Array.from(allBlanks).every(inp =>
+      normalizeAnswer(inp.value) === normalizeAnswer(inp.dataset.value)
+    );
+
+    if (allCorrect) {
+      state.doItTogetherRevealed[state.doItTogetherStepIndex] = true;
+      saveDoItTogetherProgress();
+      setTimeout(() => {
+        showDoItTogetherStep();
+      }, 500);
+    }
+  } else {
+    input.style.borderColor = "var(--error)";
+    input.style.background = "rgba(247, 118, 142, 0.15)";
+  }
+};
+
 const submitDoItTogetherAnswer = (question) => {
   const input = document.getElementById("ditAnswerInput").value.trim().toLowerCase();
   if (!input) return;
@@ -1364,6 +1592,9 @@ const submitDoItTogetherAnswer = (question) => {
     feedback.className = "result-feedback correct";
     feedback.innerHTML = `✓ Correct! Great job working through it together!`;
     recordAnswer(true, question.category);
+
+    // Clear progress for this question since they completed it
+    clearDoItTogetherProgress();
 
     // Update score if in quick practice mode
     if (state.doItTogetherMode === "quick") {
