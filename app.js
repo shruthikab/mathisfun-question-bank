@@ -198,22 +198,18 @@ const escapeHtml = (text) =>
 const formatMath = (text) => {
   let out = escapeHtml(String(text ?? ""));
 
-  out = out.replace(
-    /\b([A-Za-z0-9]+)C([A-Za-z0-9+\-]+)\b/g,
-    '<span class="math"><span class="math-base">$1</span>C<sub>$2</sub></span>'
-  );
+  // Handle square roots - √(expression) or √number
+  out = out.replace(/√\(([^)]+)\)/g, '√(<span class="math-root">$1</span>)');
+  out = out.replace(/√(\d+)/g, '√<span class="math-root">$1</span>');
 
-  out = out.replace(
-    /\b([A-Za-z0-9)\]])\^([A-Za-z0-9+\-]+)\b/g,
-    '<span class="math">$1<sup>$2</sup></span>'
-  );
+  // Handle exponents - only when preceded by a word character or closing paren
+  out = out.replace(/([A-Za-z0-9)])\^([0-9]+)/g, '$1<sup>$2</sup>');
 
-  out = out.replace(/sqrt\(([^)]+)\)/g, '<span class="math">√($1)</span>');
+  // Handle multiplication symbol (ensure it displays properly)
+  out = out.replace(/×/g, '×');
 
-  out = out.replace(
-    /\b([A-Za-z0-9+\-]+)\s*\/\s*([A-Za-z0-9+\-]+)\b/g,
-    '<span class="frac"><span class="frac-top">$1</span><span class="frac-bar"></span><span class="frac-bottom">$2</span></span>'
-  );
+  // Handle fractions - be more conservative, only match simple number/number patterns
+  out = out.replace(/(\d+)\s*\/\s*(\d+)/g, '<span class="frac"><span class="frac-top">$1</span><span class="frac-bar"></span><span class="frac-bottom">$2</span></span>');
 
   return out;
 };
@@ -689,8 +685,19 @@ const init = async () => {
 
   // Setup game mode buttons
   document.querySelectorAll(".game-mode-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setGameMode(btn.dataset.mode));
+    btn.addEventListener("click", () => {
+      const mode = btn.dataset.mode;
+      if (mode === "arcade") {
+        document.getElementById("gameModesPanel")?.classList.add("hidden");
+        document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+      } else {
+        setGameMode(mode);
+      }
+    });
   });
+
+  // Initialize arcade games
+  initArcadeGames();
 
   try {
     if (window.location.protocol === "file:" && Array.isArray(window.MATHISFUN_QUESTIONS)) {
@@ -804,6 +811,11 @@ const setGameMode = (mode) => {
   document.getElementById("mainControls")?.classList.add("hidden");
   document.getElementById("questionGrid")?.classList.add("hidden");
   document.getElementById("gameModesPanel")?.classList.add("hidden");
+  document.getElementById("arcadeGamesPanel")?.classList.add("hidden");
+  document.getElementById("speedMathPanel")?.classList.add("hidden");
+  document.getElementById("memoryMatchPanel")?.classList.add("hidden");
+  document.getElementById("numberBurstPanel")?.classList.add("hidden");
+  document.getElementById("equationRainPanel")?.classList.add("hidden");
 
   // Update button states
   document.querySelectorAll(".game-mode-btn").forEach((btn) => {
@@ -1270,17 +1282,17 @@ const parseSolutionSteps = (solutionText) => {
         newSteps.push({
           title: `Step ${idx + 1}`,
           text: trimmedSentence,
-          blanks: extractBlanks(trimmedSentence)
+          blanks: [] // Don't extract blanks from auto-split sentences
         });
       });
       return newSteps;
     }
   }
 
-  // Extract blanks from each step
+  // Don't extract blanks - let students focus on reading the solution
   return steps.map(step => ({
     ...step,
-    blanks: extractBlanks(step.text)
+    blanks: [] // Disable blanks for now to preserve formatting
   }));
 };
 
@@ -1321,22 +1333,69 @@ const startDoItTogether = (mode, question) => {
   const solutionText = solutionMap[question.id] || `Method:\n${question.hint}\n\nFinal answer: ${question.answer}`;
   state.doItTogetherSteps = parseSolutionSteps(solutionText);
 
-  // Ensure we have at least 3 steps
+  // Ensure we have at least 3 helpful steps
   if (state.doItTogetherSteps.length < 3) {
-    state.doItTogetherSteps = [
-      { title: "Step 1: Understand", text: `Read the problem carefully. ${question.question}`, blanks: [] },
-      { title: "Step 2: Plan", text: question.hint || "Think about what approach to use.", blanks: [] },
-      { title: "Step 3: Solve", text: `Work through the solution. ${solutionText}`, blanks: extractBlanks(solutionText) },
-      { title: "Step 4: Check", text: `Verify your answer. The answer is: ${question.answer}`, blanks: [] },
-    ];
+    // Check if hint is just a cross-reference (e.g., "Same as Colt Q3.")
+    const isCrossReference = question.hint && /^same as/i.test(question.hint.trim());
+
+    if (isCrossReference) {
+      // For cross-references, create a helpful explanation
+      state.doItTogetherSteps = [
+        {
+          title: "Step 1: Understand the Problem",
+          text: `Read the question carefully. ${formatMath(question.question)}\n\nThis problem asks you to find a value or solve an equation. Look at what information is given and what you need to find.`,
+          blanks: []
+        },
+        {
+          title: "Step 2: Recall Related Concepts",
+          text: `This problem references another question (Colt Q3). The same solution method applies here.\n\nThink about: What formulas, rules, or techniques were used in the similar problem?`,
+          blanks: []
+        },
+        {
+          title: "Step 3: Work Through the Solution",
+          text: `Apply the method step by step:\n${formatMath(solutionText)}\n\nShow your work clearly for each calculation.`,
+          blanks: []
+        },
+        {
+          title: "Step 4: Check Your Answer",
+          text: `Verify your solution makes sense.\n\nFinal answer: ${formatMath(question.answer)}\n\nTry plugging your answer back into the original problem to confirm it works!`,
+          blanks: []
+        },
+      ];
+    } else {
+      // Create structured steps from the hint and solution
+      const planText = question.hint || "Think about what approach to use.";
+      state.doItTogetherSteps = [
+        {
+          title: "Step 1: Understand the Problem",
+          text: `Read carefully: ${formatMath(question.question)}\n\nIdentify what you know and what you need to find.`,
+          blanks: []
+        },
+        {
+          title: "Step 2: Plan Your Approach",
+          text: planText,
+          blanks: []
+        },
+        {
+          title: "Step 3: Solve Step by Step",
+          text: `Work through the calculation:\n${formatMath(solutionText)}`,
+          blanks: []
+        },
+        {
+          title: "Step 4: Check Your Work",
+          text: `Verify: The answer is ${formatMath(question.answer)}\n\nDoes this make sense? Try checking your work!`,
+          blanks: []
+        },
+      ];
+    }
   }
 
   // Add final answer step if not present
   const lastStep = state.doItTogetherSteps[state.doItTogetherSteps.length - 1];
   if (!lastStep.text.includes(question.answer)) {
     state.doItTogetherSteps.push({
-      title: `Step ${state.doItTogetherSteps.length + 1}: Answer`,
-      text: `Final answer: ${question.answer}`,
+      title: `Step ${state.doItTogetherSteps.length + 1}: Final Answer`,
+      text: `The answer is: ${formatMath(question.answer)}`,
       blanks: []
     });
   }
@@ -1478,14 +1537,24 @@ const showDoItTogetherStep = () => {
   document.getElementById("ditStepIcon").textContent = getIconForStep(state.doItTogetherStepIndex);
   document.getElementById("ditStepIndicator").textContent = `Step ${state.doItTogetherStepIndex + 1} of ${state.doItTogetherSteps.length}`;
 
-  // Render step text with LaTeX formatting
-  let stepContent = formatMath(step.text.replace(/\n/g, "<br>"));
+  // Render step text with better formatting
+  let stepContent = step.text;
+
+  // Apply math formatting first
+  stepContent = formatMath(stepContent);
+
+  // Convert newlines to line breaks for multi-line solutions
+  if (stepContent.includes("<br>")) {
+    // Already has breaks from formatMath or elsewhere
+  } else if (step.text.includes("\n")) {
+    stepContent = stepContent.replace(/\n/g, "<br>");
+  }
 
   // Replace blanks with input fields or placeholders
   if (hasBlanks && !isRevealed) {
     step.blanks.forEach((blank, idx) => {
       const blankHtml = `<input type="text" class="blank-input" data-blank-idx="${idx}" data-value="${blank.value}" placeholder="?" />`;
-      stepContent = stepContent.replace(blank.value, blankHtml);
+      stepContent = stepContent.replace(new RegExp(escapeRegExp(blank.value), 'g'), blankHtml);
     });
     document.getElementById("ditStepText").innerHTML = stepContent;
 
@@ -1497,7 +1566,8 @@ const showDoItTogetherStep = () => {
       });
     });
   } else {
-    document.getElementById("ditStepText").innerHTML = stepContent;
+    // Wrap in styled paragraph for better readability
+    document.getElementById("ditStepText").innerHTML = `<div style="line-height:1.8;font-size:1.05rem">${stepContent}</div>`;
   }
 
   // Update progress dots
@@ -1517,7 +1587,7 @@ const showDoItTogetherStep = () => {
   document.getElementById("ditPrevStepBtn2").disabled = isFirstStep;
   document.getElementById("ditNextStepBtn2").disabled = isLastStep;
 
-  // Show/hide reveal button
+  // Show/hide reveal button - only show if there are blanks to reveal
   const revealBtn = document.getElementById("ditRevealBtn");
   const actionsContainer = document.getElementById("ditStepActions");
   if (revealBtn && actionsContainer) {
@@ -1525,11 +1595,8 @@ const showDoItTogetherStep = () => {
       actionsContainer.classList.remove("hidden");
       revealBtn.textContent = "Reveal This Step";
       revealBtn.disabled = false;
-    } else if (!isRevealed) {
-      actionsContainer.classList.remove("hidden");
-      revealBtn.textContent = "Reveal";
-      revealBtn.disabled = false;
     } else {
+      // No blanks or already revealed - hide the reveal button
       actionsContainer.classList.add("hidden");
     }
   }
@@ -1551,6 +1618,10 @@ const showDoItTogetherStep = () => {
     document.getElementById("ditFeedback").classList.add("hidden");
     document.getElementById("ditAnswerInput").focus();
   }
+};
+
+const escapeRegExp = (string) => {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
 const getIconForStep = (index) => {
@@ -1666,4 +1737,952 @@ const renderProgress = () => {
   document.getElementById("progressBackBtn")?.addEventListener("click", () => {
     setGameMode("browse");
   });
+};
+
+// ============= ARCADE GAMES =============
+
+// Arcade game state
+const arcadeState = {
+  speedMath: {
+    score: 0,
+    timeRemaining: 60,
+    timerHandle: null,
+    currentQuestion: null,
+    active: false,
+    difficulty: 1, // Increases with score
+  },
+  memoryMatch: {
+    cards: [],
+    flipped: [],
+    matched: 0,
+    timeElapsed: 0,
+    timerHandle: null,
+    active: false,
+    difficulty: 1,
+  },
+  numberBurst: {
+    score: 0,
+    lives: 3,
+    target: 10,
+    numbers: [],
+    active: false,
+    operation: '+',
+  },
+  equationRain: {
+    score: 0,
+    lives: 3,
+    equations: [],
+    fallSpeed: 1,
+    timerHandle: null,
+    active: false,
+    difficulty: 1,
+  },
+};
+
+// Generate skill-based math problems aligned with question bank
+const generateSpeedMathProblem = () => {
+  const difficulty = arcadeState.speedMath.difficulty;
+  const skillTypes = ['algebra', 'numberTheory', 'geometry', 'fractions', 'multiDigit'];
+  const skillType = randomElement(skillTypes);
+
+  let question, answer;
+
+  switch (skillType) {
+    case 'algebra':
+      // Generate algebra problems: solve for x, evaluate expressions
+      if (Math.random() < 0.5) {
+        // ax + b = c, solve for x
+        const a = Math.floor(Math.random() * 10 * difficulty) + 2;
+        const x = Math.floor(Math.random() * 20 * difficulty) + 1;
+        const b = Math.floor(Math.random() * 50 * difficulty) + 1;
+        const c = a * x + b;
+        const sign = b >= 0 ? '+' : '-';
+        question = `${a}x ${sign} ${Math.abs(b)} = ${c}, find x`;
+        answer = String(x);
+      } else {
+        // Evaluate expression: a(b + c)
+        const a = Math.floor(Math.random() * 10 * difficulty) + 2;
+        const b = Math.floor(Math.random() * 10 * difficulty) + 1;
+        const c = Math.floor(Math.random() * 10 * difficulty) + 1;
+        question = `${a}(${b} + ${c}) = ?`;
+        answer = String(a * (b + c));
+      }
+      break;
+
+    case 'numberTheory':
+      // GCD, LCM, prime factors, perfect squares
+      const ntType = randomElement(['gcd', 'lcm', 'factors', 'squares']);
+      if (ntType === 'gcd') {
+        const base = Math.floor(Math.random() * 10 * difficulty) + 3;
+        const a = base * (Math.floor(Math.random() * 5) + 2);
+        const b = base * (Math.floor(Math.random() * 5) + 2);
+        question = `GCD(${a}, ${b}) = ?`;
+        answer = String(base);
+      } else if (ntType === 'lcm') {
+        const a = Math.floor(Math.random() * 8 * difficulty) + 3;
+        const b = Math.floor(Math.random() * 8 * difficulty) + 3;
+        const gcd = (x, y) => (y === 0 ? x : gcd(y, x % y));
+        const lcm = (a * b) / gcd(a, b);
+        question = `LCM(${a}, ${b}) = ?`;
+        answer = String(lcm);
+      } else if (ntType === 'factors') {
+        const n = Math.floor(Math.random() * 50 * difficulty) + 10;
+        let count = 0;
+        for (let i = 1; i <= n; i++) {
+          if (n % i === 0) count++;
+        }
+        question = `Number of factors of ${n} = ?`;
+        answer = String(count);
+      } else {
+        // Perfect square check or find
+        const root = Math.floor(Math.random() * 20 * difficulty) + 5;
+        question = `√${root * root} = ?`;
+        answer = String(root);
+      }
+      break;
+
+    case 'geometry':
+      // Area, perimeter, angles
+      const geoType = randomElement(['area', 'perimeter', 'pythagorean', 'angles']);
+      if (geoType === 'area') {
+        const shape = randomElement(['rectangle', 'triangle', 'circle']);
+        if (shape === 'rectangle') {
+          const l = Math.floor(Math.random() * 20 * difficulty) + 3;
+          const w = Math.floor(Math.random() * 15 * difficulty) + 2;
+          question = `Area of rectangle: ${l} × ${w} = ?`;
+          answer = String(l * w);
+        } else if (shape === 'triangle') {
+          const b = Math.floor(Math.random() * 20 * difficulty) + 4;
+          const h = Math.floor(Math.random() * 15 * difficulty) + 3;
+          question = `Area of triangle: base=${b}, height=${h} = ?`;
+          answer = String(Math.floor(b * h / 2));
+        } else {
+          const r = Math.floor(Math.random() * 10 * difficulty) + 2;
+          question = `Area of circle (use π=3.14), r=${r} = ?`;
+          answer = String(Math.round(3.14 * r * r));
+        }
+      } else if (geoType === 'pythagorean') {
+        // Pythagorean triples
+        const triples = [[3,4,5], [5,12,13], [6,8,10], [8,15,17], [9,12,15]];
+        const [a, b, c] = randomElement(triples);
+        const scale = Math.floor(Math.random() * difficulty) + 1;
+        question = `Right triangle: legs ${a*scale} and ${b*scale}, hypotenuse = ?`;
+        answer = String(c * scale);
+      } else if (geoType === 'angles') {
+        const n = randomElement([3, 4, 5, 6, 8]);
+        const sum = (n - 2) * 180;
+        question = `Sum of interior angles of a ${n}-gon = ?`;
+        answer = String(sum);
+      } else {
+        const l = Math.floor(Math.random() * 15 * difficulty) + 5;
+        const w = Math.floor(Math.random() * 12 * difficulty) + 4;
+        question = `Perimeter of rectangle: ${l} × ${w} = ?`;
+        answer = String(2 * (l + w));
+      }
+      break;
+
+    case 'fractions':
+      // Fraction operations
+      const op = randomElement(['add', 'subtract', 'multiply', 'simplify']);
+      if (op === 'add' || op === 'subtract') {
+        const denom = randomElement([2, 3, 4, 5, 6, 8, 10, 12]);
+        const num1 = Math.floor(Math.random() * denom) + 1;
+        const num2 = Math.floor(Math.random() * denom) + 1;
+        if (op === 'add') {
+          question = `${num1}/${denom} + ${num2}/${denom} = ? (simplified)`;
+          const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+          const g = gcd(num1 + num2, denom);
+          if (denom / g === 1) {
+            answer = String((num1 + num2) / g);
+          } else {
+            answer = `${(num1 + num2) / g}/${denom / g}`;
+          }
+        } else {
+          const max = Math.max(num1, num2);
+          const min = Math.min(num1, num2);
+          question = `${max}/${denom} - ${min}/${denom} = ? (simplified)`;
+          const g = gcd(max - min, denom);
+          if (denom / g === 1) {
+            answer = String((max - min) / g);
+          } else {
+            answer = `${(max - min) / g}/${denom / g}`;
+          }
+        }
+      } else if (op === 'multiply') {
+        const a = Math.floor(Math.random() * 8 * difficulty) + 2;
+        const b = Math.floor(Math.random() * 8) + 2;
+        const c = Math.floor(Math.random() * 8 * difficulty) + 2;
+        const d = Math.floor(Math.random() * 8) + 2;
+        question = `${a}/${b} × ${c}/${d} = ? (simplified)`;
+        const num = a * c;
+        const den = b * d;
+        const g = gcd(num, den);
+        if (den / g === 1) {
+          answer = String(num / g);
+        } else {
+          answer = `${num / g}/${den / g}`;
+        }
+      } else {
+        const num = Math.floor(Math.random() * 40 * difficulty) + 10;
+        const den = Math.floor(Math.random() * 40) + 5;
+        const g = gcd(num, den);
+        question = `Simplify ${num}/${den}`;
+        answer = `${num/g}/${den/g}`;
+      }
+      break;
+
+    default:
+      // Multi-digit arithmetic
+      const multiOp = randomElement(['+', '-', '×']);
+      let a, b;
+      if (multiOp === '+') {
+        a = Math.floor(Math.random() * 100 * difficulty) + 50;
+        b = Math.floor(Math.random() * 100 * difficulty) + 50;
+        question = `${a} + ${b} = ?`;
+        answer = String(a + b);
+      } else if (multiOp === '-') {
+        a = Math.floor(Math.random() * 200 * difficulty) + 100;
+        b = Math.floor(Math.random() * a);
+        question = `${a} - ${b} = ?`;
+        answer = String(a - b);
+      } else {
+        a = Math.floor(Math.random() * 20 * difficulty) + 5;
+        b = Math.floor(Math.random() * 20) + 3;
+        question = `${a} × ${b} = ?`;
+        answer = String(a * b);
+      }
+  }
+
+  return { question: formatMath(question), answer: String(answer) };
+};
+
+// Helper function for GCD
+const gcd = (a, b) => {
+  return b === 0 ? a : gcd(b, a % b);
+};
+
+// Speed Math Game
+const startSpeedMath = () => {
+  arcadeState.speedMath.active = true;
+  arcadeState.speedMath.score = 0;
+  arcadeState.speedMath.difficulty = 1;
+  arcadeState.speedMath.timeRemaining = 60;
+  arcadeState.speedMath.timerHandle = null;
+
+  document.getElementById("arcadeGamesPanel")?.classList.add("hidden");
+  document.getElementById("speedMathPanel")?.classList.remove("hidden");
+
+  updateSpeedMathDisplay();
+  nextSpeedMathProblem();
+
+  // Start timer
+  arcadeState.speedMath.timerHandle = setInterval(() => {
+    arcadeState.speedMath.timeRemaining--;
+    updateSpeedMathDisplay();
+
+    if (arcadeState.speedMath.timeRemaining <= 0) {
+      endSpeedMath();
+    }
+  }, 1000);
+};
+
+const updateSpeedMathDisplay = () => {
+  document.getElementById("smScoreDisplay").textContent = `Score: ${arcadeState.speedMath.score}`;
+  document.getElementById("smTimeDisplay").textContent = `Time: ${arcadeState.speedMath.timeRemaining}s`;
+};
+
+const nextSpeedMathProblem = () => {
+  // Increase difficulty every 5 points
+  arcadeState.speedMath.difficulty = Math.floor(arcadeState.speedMath.score / 5) + 1;
+  const problem = generateSpeedMathProblem();
+  arcadeState.speedMath.currentQuestion = problem;
+  document.getElementById("smQuestionText").innerHTML = formatMath(problem.question);
+  document.getElementById("smAnswerInput").value = "";
+  document.getElementById("smAnswerInput").focus();
+  document.getElementById("smFeedback")?.classList.add("hidden");
+};
+
+const checkSpeedMathAnswer = () => {
+  const input = document.getElementById("smAnswerInput");
+  const feedback = document.getElementById("smFeedback");
+  const userAnswer = normalizeAnswer(input.value);
+  const correctAnswer = normalizeAnswer(arcadeState.speedMath.currentQuestion.answer);
+
+  if (userAnswer === correctAnswer) {
+    arcadeState.speedMath.score++;
+    feedback.textContent = "✓ Correct!";
+    feedback.className = "result-feedback correct";
+  } else {
+    feedback.textContent = `✗ Wrong! Answer was ${arcadeState.speedMath.currentQuestion.answer}`;
+    feedback.className = "result-feedback incorrect";
+  }
+
+  feedback.classList.remove("hidden");
+  updateSpeedMathDisplay();
+
+  setTimeout(() => {
+    nextSpeedMathProblem();
+  }, 800);
+};
+
+const endSpeedMath = () => {
+  clearInterval(arcadeState.speedMath.timerHandle);
+  arcadeState.speedMath.active = false;
+  document.getElementById("speedMathPanel")?.classList.add("hidden");
+  document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  alert(`Time's up! Your score: ${arcadeState.speedMath.score}`);
+};
+
+// Memory Match Game
+const startMemoryMatch = () => {
+  arcadeState.memoryMatch.active = true;
+  arcadeState.memoryMatch.matched = 0;
+  arcadeState.memoryMatch.flipped = [];
+  arcadeState.memoryMatch.timeElapsed = 0;
+  arcadeState.memoryMatch.difficulty = 1;
+
+  document.getElementById("arcadeGamesPanel")?.classList.add("hidden");
+  document.getElementById("memoryMatchPanel")?.classList.remove("hidden");
+
+  // Generate pairs of math problems and answers based on skill categories
+  const pairs = generateMemoryMatchPairs();
+
+  // Shuffle cards
+  arcadeState.memoryMatch.cards = shuffleArray(pairs);
+
+  renderMemoryGrid();
+  updateMemoryMatchDisplay();
+
+  // Start timer
+  arcadeState.memoryMatch.timerHandle = setInterval(() => {
+    arcadeState.memoryMatch.timeElapsed++;
+    updateMemoryMatchDisplay();
+
+    if (arcadeState.memoryMatch.matched === 8) {
+      endMemoryMatch();
+    }
+  }, 1000);
+};
+
+// Generate skill-based memory match pairs
+const generateMemoryMatchPairs = () => {
+  const difficulty = arcadeState.memoryMatch.difficulty;
+  const pairs = [];
+  const skillTypes = ['algebra', 'numberTheory', 'geometry', 'fractions'];
+
+  for (let i = 0; i < 8; i++) {
+    const skillType = skillTypes[i % skillTypes.length];
+    let problem, answer;
+
+    switch (skillType) {
+      case 'algebra':
+        if (i < 4) {
+          // Solve for x: ax + b = c
+          const a = Math.floor(Math.random() * 8 * difficulty) + 2;
+          const x = Math.floor(Math.random() * 10 * difficulty) + 1;
+          const b = Math.floor(Math.random() * 20 * difficulty) + 1;
+          const c = a * x + b;
+          const sign = b >= 0 ? '+' : '-';
+          problem = `${a}x ${sign} ${Math.abs(b)} = ${c}`;
+          answer = String(x);
+        } else {
+          // Evaluate expression: a(b + c)
+          const a = Math.floor(Math.random() * 10 * difficulty) + 2;
+          const b = Math.floor(Math.random() * 10 * difficulty) + 1;
+          const c = Math.floor(Math.random() * 10) + 1;
+          problem = `${a}(${b} + ${c})`;
+          answer = String(a * (b + c));
+        }
+        break;
+
+      case 'numberTheory':
+        const ntType = randomElement(['gcd', 'squares', 'factors']);
+        if (ntType === 'gcd') {
+          const base = Math.floor(Math.random() * 8 * difficulty) + 2;
+          const num1 = base * (Math.floor(Math.random() * 4) + 2);
+          const num2 = base * (Math.floor(Math.random() * 4) + 2);
+          problem = `GCD(${num1}, ${num2})`;
+          answer = String(base);
+        } else if (ntType === 'squares') {
+          const root = Math.floor(Math.random() * 15 * difficulty) + 3;
+          problem = `√${root * root}`;
+          answer = String(root);
+        } else {
+          const n = Math.floor(Math.random() * 30 * difficulty) + 8;
+          let count = 0;
+          for (let j = 1; j <= n; j++) {
+            if (n % j === 0) count++;
+          }
+          problem = `Factors of ${n}`;
+          answer = String(count);
+        }
+        break;
+
+      case 'geometry':
+        const geoType = randomElement(['area', 'pythagorean', 'perimeter']);
+        if (geoType === 'area') {
+          const l = Math.floor(Math.random() * 12 * difficulty) + 3;
+          const w = Math.floor(Math.random() * 10 * difficulty) + 2;
+          problem = `Area: ${l} × ${w}`;
+          answer = String(l * w);
+        } else if (geoType === 'pythagorean') {
+          const triples = [[3,4,5], [5,12,13], [6,8,10], [8,15,17]];
+          const [a, b, c] = randomElement(triples);
+          const scale = Math.floor(Math.random() * difficulty) + 1;
+          problem = `√(${(a*scale)**2} + ${(b*scale)**2})`;
+          answer = String(c * scale);
+        } else {
+          const s = Math.floor(Math.random() * 12 * difficulty) + 4;
+          problem = `Square perimeter: ${s}`;
+          answer = String(4 * s);
+        }
+        break;
+
+      case 'fractions':
+        const denom = randomElement([2, 3, 4, 5, 6, 8, 10, 12]);
+        const num1 = Math.floor(Math.random() * denom) + 1;
+        const num2 = Math.floor(Math.random() * denom) + 1;
+        const sum = num1 + num2;
+        const g = gcd(sum, denom);
+        problem = `${num1}/${denom} + ${num2}/${denom}`;
+        if (denom / g === 1) {
+          answer = String(sum / g);
+        } else {
+          answer = `${sum/g}/${denom/g}`;
+        }
+        break;
+
+      default:
+        const a = Math.floor(Math.random() * 15 * difficulty) + 5;
+        const b = Math.floor(Math.random() * 12 * difficulty) + 3;
+        problem = `${a} × ${b}`;
+        answer = String(a * b);
+    }
+
+    pairs.push({ id: i, content: problem, type: 'problem' });
+    pairs.push({ id: i, content: answer, type: 'answer' });
+  }
+
+  return pairs;
+};
+
+const shuffleArray = (array) => {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+};
+
+const renderMemoryGrid = () => {
+  const grid = document.getElementById("memoryGrid");
+  grid.innerHTML = arcadeState.memoryMatch.cards.map((card, index) => {
+    const formattedContent = formatMath(card.content);
+    return `<div class="memory-card" data-index="${index}" onclick="flipMemoryCard(${index})">
+      <div class='card-front'>${formattedContent}</div>
+      <div class='card-back'>?</div>
+    </div>`;
+  }).join("");
+};
+
+const flipMemoryCard = (index) => {
+  const { cards, flipped } = arcadeState.memoryMatch;
+
+  // Ignore if already matched
+  if (cards[index].matched) return;
+
+  // Toggle: if already flipped, flip it back (unless it's matched)
+  if (cards[index].flipped) {
+    cards[index].flipped = false;
+    const grid = document.getElementById("memoryGrid");
+    const cardEl = grid.children[index];
+    cardEl.classList.remove("flipped");
+    return;
+  }
+
+  // Ignore if we already have 2 flipped (waiting to check match)
+  if (flipped.length >= 2) return;
+
+  cards[index].flipped = true;
+  const card = cards[index];
+
+  const grid = document.getElementById("memoryGrid");
+  const cardEl = grid.children[index];
+  cardEl.classList.add("flipped");
+
+  flipped.push(index);
+
+  if (flipped.length === 2) {
+    checkMemoryMatch();
+  }
+};
+
+const checkMemoryMatch = () => {
+  const { cards, flipped } = arcadeState.memoryMatch;
+  const [idx1, idx2] = flipped;
+
+  if (cards[idx1].id === cards[idx2].id) {
+    // Match found - keep them visible
+    cards[idx1].matched = true;
+    cards[idx2].matched = true;
+    arcadeState.memoryMatch.matched++;
+    flipped.length = 0;
+    updateMemoryMatchDisplay();
+
+    // Check for win
+    if (arcadeState.memoryMatch.matched === 8) {
+      setTimeout(endMemoryMatch, 500);
+    }
+  } else {
+    // No match - but keep them visible for learning!
+    // Just clear the flipped array so player can try other cards
+    flipped.length = 0;
+  }
+};
+
+const updateMemoryMatchDisplay = () => {
+  document.getElementById("mmScoreDisplay").textContent = `Matches: ${arcadeState.memoryMatch.matched}/8`;
+  document.getElementById("mmTimeDisplay").textContent = `Time: ${arcadeState.memoryMatch.timeElapsed}s`;
+};
+
+const endMemoryMatch = () => {
+  clearInterval(arcadeState.memoryMatch.timerHandle);
+  arcadeState.memoryMatch.active = false;
+  document.getElementById("memoryMatchPanel")?.classList.add("hidden");
+  document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  alert(`Great job! You completed Memory Match in ${arcadeState.memoryMatch.timeElapsed} seconds!`);
+};
+
+// Number Burst Game - Simple: find the target number
+const startNumberBurst = () => {
+  arcadeState.numberBurst.active = true;
+  arcadeState.numberBurst.score = 0;
+  arcadeState.numberBurst.lives = 3;
+  arcadeState.numberBurst.target = 10;
+  arcadeState.numberBurst.difficulty = 1;
+
+  document.getElementById("arcadeGamesPanel")?.classList.add("hidden");
+  document.getElementById("numberBurstPanel")?.classList.remove("hidden");
+
+  generateNumberBurstNumbers();
+  updateNumberBurstDisplay();
+  updateNumberBurstTarget();
+};
+
+const updateNumberBurstTarget = () => {
+  const diff = arcadeState.numberBurst.difficulty;
+  // Generate a target number to find
+  arcadeState.numberBurst.target = Math.floor(Math.random() * 15 * diff) + 5;
+  document.getElementById("nbTargetText").textContent = `FIND: ${arcadeState.numberBurst.target}`;
+};
+
+const generateNumberBurstNumbers = () => {
+  const container = document.getElementById("numberBurstGrid");
+  arcadeState.numberBurst.numbers = [];
+  const target = arcadeState.numberBurst.target;
+
+  for (let i = 0; i < 20; i++) {
+    let num;
+    // 25% chance to be the target (correct answer)
+    if (Math.random() < 0.25) {
+      num = target;
+    } else {
+      // Generate random numbers near the target
+      const offset = Math.floor(Math.random() * 10) - 5;
+      num = Math.max(1, target + offset);
+    }
+    arcadeState.numberBurst.numbers.push(num);
+  }
+
+  container.innerHTML = arcadeState.numberBurst.numbers.map((num, idx) => `
+    <button class="number-burst-btn" onclick="catchNumberBurst(${idx})">${num}</button>
+  `).join("");
+};
+
+const catchNumberBurst = (index) => {
+  const btns = document.querySelectorAll(".number-burst-btn");
+  const num = arcadeState.numberBurst.numbers[index];
+  const target = arcadeState.numberBurst.target;
+
+  if (num === target) {
+    // Correct! Found the target number
+    arcadeState.numberBurst.score++;
+    btns[index].style.background = "rgba(158, 206, 106, 0.3)";
+    btns[index].style.borderColor = "var(--success)";
+
+    // Generate new number for this spot
+    setTimeout(() => {
+      const newNum = Math.floor(Math.random() * 30) + 1;
+      arcadeState.numberBurst.numbers[index] = newNum;
+      btns[index].textContent = newNum;
+      btns[index].style.background = "";
+      btns[index].style.borderColor = "";
+    }, 300);
+
+    // Increase difficulty every 5 points
+    if (arcadeState.numberBurst.score % 5 === 0) {
+      arcadeState.numberBurst.difficulty = Math.floor(arcadeState.numberBurst.score / 5) + 1;
+      updateNumberBurstTarget();
+      generateNumberBurstNumbers();
+    }
+  } else {
+    // Wrong number!
+    arcadeState.numberBurst.lives--;
+    btns[index].classList.add("caught");
+    setTimeout(() => btns[index].classList.remove("caught"), 300);
+
+    if (arcadeState.numberBurst.lives <= 0) {
+      endNumberBurst();
+      return;
+    }
+  }
+
+  updateNumberBurstDisplay();
+};
+
+const updateNumberBurstDisplay = () => {
+  document.getElementById("nbScoreDisplay").textContent = `Score: ${arcadeState.numberBurst.score}`;
+  document.getElementById("nbLivesDisplay").textContent = `Lives: ${"❤️".repeat(arcadeState.numberBurst.lives)}`;
+};
+
+const endNumberBurst = () => {
+  arcadeState.numberBurst.active = false;
+  document.getElementById("numberBurstPanel")?.classList.add("hidden");
+  document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  alert(`Game Over! Your score: ${arcadeState.numberBurst.score}`);
+};
+
+// Equation Rain Game - Skill-based equations from question bank topics
+const startEquationRain = () => {
+  arcadeState.equationRain.active = true;
+  arcadeState.equationRain.score = 0;
+  arcadeState.equationRain.lives = 3;
+  arcadeState.equationRain.fallSpeed = 0.5;
+  arcadeState.equationRain.difficulty = 1;
+  arcadeState.equationRain.equations = [];
+
+  document.getElementById("arcadeGamesPanel")?.classList.add("hidden");
+  document.getElementById("equationRainPanel")?.classList.remove("hidden");
+  document.getElementById("equationRainContainer").innerHTML = `
+    <div id="rainClouds" style="position:absolute;top:0;left:0;right:0;height:50px;background:linear-gradient(180deg,rgba(100,100,120,0.3),transparent)"></div>
+  `;
+  document.getElementById("erAnswerInput").value = "";
+
+  updateEquationRainDisplay();
+
+  // Spawn equations
+  spawnEquation();
+
+  // Start game loop
+  arcadeState.equationRain.timerHandle = setInterval(() => {
+    updateEquationRain();
+
+    // Spawn new equations periodically
+    if (Math.random() < 0.025) {
+      spawnEquation();
+    }
+  }, 50);
+};
+
+// Generate skill-based equation for Equation Rain
+const generateEquationRainProblem = () => {
+  const diff = arcadeState.equationRain.difficulty;
+  const skillTypes = ['algebra', 'numberTheory', 'geometry', 'fractions', 'multiDigit'];
+  const skillType = randomElement(skillTypes);
+
+  let question, answer;
+
+  switch (skillType) {
+    case 'algebra':
+      const algType = randomElement(['solveX', 'evaluate', 'simplify']);
+      if (algType === 'solveX') {
+        const a = Math.floor(Math.random() * 8 * diff) + 2;
+        const x = Math.floor(Math.random() * 10 * diff) + 1;
+        const b = Math.floor(Math.random() * 30 * diff) + 1;
+        const c = a * x + b;
+        const sign = b >= 0 ? '+' : '-';
+        question = `${a}x${sign}${Math.abs(b)}=${c}`;
+        answer = String(x);
+      } else if (algType === 'evaluate') {
+        const a = Math.floor(Math.random() * 10 * diff) + 2;
+        const b = Math.floor(Math.random() * 10 * diff) + 1;
+        const c = Math.floor(Math.random() * 10) + 1;
+        question = `${a}(${b}+${c})`;
+        answer = String(a * (b + c));
+      } else {
+        const a = Math.floor(Math.random() * 10 * diff) + 2;
+        const b = Math.floor(Math.random() * 10) + 1;
+        question = `${a}**2-${b}**2`;
+        answer = String((a + b) * (a - b));
+      }
+      break;
+
+    case 'numberTheory':
+      const ntType = randomElement(['gcd', 'lcm', 'sqrt', 'factors']);
+      if (ntType === 'gcd') {
+        const base = Math.floor(Math.random() * 8 * diff) + 2;
+        const num1 = base * (Math.floor(Math.random() * 4) + 2);
+        const num2 = base * (Math.floor(Math.random() * 4) + 2);
+        question = `GCD(${num1},${num2})`;
+        answer = String(base);
+      } else if (ntType === 'lcm') {
+        const a = Math.floor(Math.random() * 8 * diff) + 2;
+        const b = Math.floor(Math.random() * 6) + 2;
+        const g = gcd(a, b);
+        const lcm = (a * b) / g;
+        question = `LCM(${a},${b})`;
+        answer = String(lcm);
+      } else if (ntType === 'sqrt') {
+        const root = Math.floor(Math.random() * 15 * diff) + 2;
+        question = `√${root * root}`;
+        answer = String(root);
+      } else {
+        const n = Math.floor(Math.random() * 30 * diff) + 6;
+        let count = 0;
+        for (let i = 1; i <= n; i++) {
+          if (n % i === 0) count++;
+        }
+        question = `Factors(${n})`;
+        answer = String(count);
+      }
+      break;
+
+    case 'geometry':
+      const geoType = randomElement(['area', 'pythagorean', 'perimeter', 'angles']);
+      if (geoType === 'area') {
+        const shape = randomElement(['rectangle', 'triangle']);
+        if (shape === 'rectangle') {
+          const l = Math.floor(Math.random() * 15 * diff) + 3;
+          const w = Math.floor(Math.random() * 12 * diff) + 2;
+          question = `${l}×${w}(area)`;
+          answer = String(l * w);
+        } else {
+          const b = Math.floor(Math.random() * 16 * diff) + 4;
+          const h = Math.floor(Math.random() * 12 * diff) + 3;
+          question = `△(${b},${h})`;
+          answer = String(Math.floor(b * h / 2));
+        }
+      } else if (geoType === 'pythagorean') {
+        const triples = [[3,4,5], [5,12,13], [6,8,10], [8,15,17]];
+        const [a, b, c] = randomElement(triples);
+        const scale = Math.floor(Math.random() * diff) + 1;
+        question = `√(${(a*scale)**2}+${(b*scale)**2})`;
+        answer = String(c * scale);
+      } else if (geoType === 'perimeter') {
+        const l = Math.floor(Math.random() * 12 * diff) + 4;
+        const w = Math.floor(Math.random() * 10 * diff) + 3;
+        question = `P(${l},${w})`;
+        answer = String(2 * (l + w));
+      } else {
+        const n = randomElement([3, 4, 5, 6]);
+        const angleSum = (n - 2) * 180;
+        question = `${n}-gon angle sum`;
+        answer = String(angleSum);
+      }
+      break;
+
+    case 'fractions':
+      const denom = randomElement([2, 3, 4, 5, 6, 8, 10]);
+      const num1 = Math.floor(Math.random() * denom) + 1;
+      const num2 = Math.floor(Math.random() * denom) + 1;
+      const op = randomElement(['+', '-']);
+      if (op === '+') {
+        question = `${num1}/${denom}+${num2}/${denom}`;
+        const sum = num1 + num2;
+        const g = gcd(sum, denom);
+        if (denom / g === 1) {
+          answer = String(sum / g);
+        } else {
+          answer = `${sum/g}/${denom/g}`;
+        }
+      } else {
+        const max = Math.max(num1, num2);
+        const min = Math.min(num1, num2);
+        question = `${max}/${denom}-${min}/${denom}`;
+        const diff = max - min;
+        const g = gcd(diff, denom);
+        if (denom / g === 1) {
+          answer = String(diff / g);
+        } else {
+          answer = `${diff/g}/${denom/g}`;
+        }
+      }
+      break;
+
+    default:
+      // Multi-digit arithmetic
+      const multiOp = randomElement(['+', '-', '×']);
+      let a, b;
+      if (multiOp === '+') {
+        a = Math.floor(Math.random() * 50 * diff) + 20;
+        b = Math.floor(Math.random() * 50 * diff) + 20;
+        question = `${a}+${b}`;
+        answer = String(a + b);
+      } else if (multiOp === '-') {
+        a = Math.floor(Math.random() * 80 * diff) + 50;
+        b = Math.floor(Math.random() * a);
+        question = `${a}-${b}`;
+        answer = String(a - b);
+      } else {
+        a = Math.floor(Math.random() * 15 * diff) + 5;
+        b = Math.floor(Math.random() * 12) + 3;
+        question = `${a}×${b}`;
+        answer = String(a * b);
+      }
+  }
+
+  return { question: formatMath(question), answer: String(answer) };
+};
+
+const spawnEquation = () => {
+  const container = document.getElementById("equationRainContainer");
+  const problem = generateEquationRainProblem();
+
+  const equation = {
+    id: Date.now() + Math.random(),
+    x: Math.random() * 80 + 10, // 10-90%
+    y: -40,
+    answer: problem.answer,
+    element: null,
+  };
+
+  const el = document.createElement("div");
+  el.className = "rain-equation";
+  el.textContent = problem.question;
+  el.style.left = `${equation.x}%`;
+  el.style.top = `${equation.y}px`;
+  el.onclick = () => solveEquation(equation);
+
+  container.appendChild(el);
+  equation.element = el;
+  arcadeState.equationRain.equations.push(equation);
+};
+
+const solveEquation = (equation) => {
+  const input = document.getElementById("erAnswerInput");
+  const feedback = document.getElementById("erFeedback");
+  const userAnswer = normalizeAnswer(input.value);
+
+  if (userAnswer === String(equation.answer)) {
+    arcadeState.equationRain.score++;
+    equation.element.remove();
+    arcadeState.equationRain.equations = arcadeState.equationRain.equations.filter(e => e.id !== equation.id);
+    input.value = "";
+    feedback.textContent = "✓";
+    feedback.className = "result-feedback correct";
+    feedback.classList.remove("hidden");
+    setTimeout(() => feedback.classList.add("hidden"), 500);
+    updateEquationRainDisplay();
+  }
+};
+
+const updateEquationRain = () => {
+  arcadeState.equationRain.equations.forEach((eq) => {
+    eq.y += arcadeState.equationRain.fallSpeed;
+    eq.element.style.top = `${eq.y}px`;
+
+    // Check if reached bottom
+    if (eq.y > 220) {
+      arcadeState.equationRain.lives--;
+      eq.element.remove();
+      updateEquationRainDisplay();
+
+      if (arcadeState.equationRain.lives <= 0) {
+        endEquationRain();
+      }
+    }
+  });
+
+  // Increase difficulty based on score
+  if (arcadeState.equationRain.score > 0 && arcadeState.equationRain.score % 5 === 0) {
+    const newDifficulty = Math.floor(arcadeState.equationRain.score / 5) + 1;
+    if (newDifficulty > arcadeState.equationRain.difficulty) {
+      arcadeState.equationRain.difficulty = newDifficulty;
+      arcadeState.equationRain.fallSpeed += 0.3; // Increase fall speed
+    }
+  } else {
+    // Gradual increase
+    arcadeState.equationRain.fallSpeed += 0.001;
+  }
+};
+
+const updateEquationRainDisplay = () => {
+  document.getElementById("erScoreDisplay").textContent = `Score: ${arcadeState.equationRain.score}`;
+  document.getElementById("erLivesDisplay").textContent = `Lives: ${arcadeState.equationRain.lives}`;
+};
+
+const endEquationRain = () => {
+  clearInterval(arcadeState.equationRain.timerHandle);
+  arcadeState.equationRain.active = false;
+  document.getElementById("equationRainPanel")?.classList.add("hidden");
+  document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  alert(`Game Over! Your score: ${arcadeState.equationRain.score}`);
+};
+
+// Initialize Arcade Games
+const initArcadeGames = () => {
+  // Back button
+  document.getElementById("arcadeBackBtn")?.addEventListener("click", () => {
+    document.getElementById("arcadeGamesPanel")?.classList.add("hidden");
+    document.getElementById("gameModesPanel")?.classList.remove("hidden");
+  });
+
+  // Game selection buttons
+  document.querySelector('[data-arcade="speed-math"]')?.addEventListener("click", startSpeedMath);
+  document.querySelector('[data-arcade="memory-match"]')?.addEventListener("click", startMemoryMatch);
+  document.querySelector('[data-arcade="number-burst"]')?.addEventListener("click", startNumberBurst);
+  document.querySelector('[data-arcade="equation-rain"]')?.addEventListener("click", startEquationRain);
+
+  // Exit buttons
+  document.getElementById("smExitBtn")?.addEventListener("click", () => {
+    clearInterval(arcadeState.speedMath.timerHandle);
+    document.getElementById("speedMathPanel")?.classList.add("hidden");
+    document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  });
+
+  document.getElementById("mmExitBtn")?.addEventListener("click", () => {
+    clearInterval(arcadeState.memoryMatch.timerHandle);
+    document.getElementById("memoryMatchPanel")?.classList.add("hidden");
+    document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  });
+
+  document.getElementById("nbExitBtn")?.addEventListener("click", () => {
+    document.getElementById("numberBurstPanel")?.classList.add("hidden");
+    document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  });
+
+  document.getElementById("erExitBtn")?.addEventListener("click", () => {
+    clearInterval(arcadeState.equationRain.timerHandle);
+    document.getElementById("equationRainPanel")?.classList.add("hidden");
+    document.getElementById("arcadeGamesPanel")?.classList.remove("hidden");
+  });
+
+  // Submit buttons
+  document.getElementById("smSubmitBtn")?.addEventListener("click", checkSpeedMathAnswer);
+  document.getElementById("smAnswerInput")?.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") checkSpeedMathAnswer();
+  });
+
+  document.getElementById("erSubmitBtn")?.addEventListener("click", () => {
+    // Find the lowest equation and solve it
+    const equations = arcadeState.equationRain.equations;
+    if (equations.length > 0) {
+      const lowest = equations.reduce((min, eq) => eq.y > min.y ? eq : min, equations[0]);
+      solveEquation(lowest);
+    }
+  });
+  document.getElementById("erAnswerInput")?.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      const equations = arcadeState.equationRain.equations;
+      if (equations.length > 0) {
+        const lowest = equations.reduce((min, eq) => eq.y > min.y ? eq : min, equations[0]);
+        solveEquation(lowest);
+      }
+    }
+  });
+
+  // Expose functions globally for onclick handlers
+  window.flipMemoryCard = flipMemoryCard;
+  window.catchNumberBurst = catchNumberBurst;
 };
