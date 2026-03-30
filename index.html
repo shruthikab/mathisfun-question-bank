@@ -153,13 +153,16 @@ body{margin:0;font-family:"Space Grotesk","IBM Plex Sans","Segoe UI",sans-serif;
               <span class="chip">Quick Practice</span>
               <span class="chip" id="qpStreakDisplay">Streak: 0</span>
             </div>
-            <button class="mini-btn" id="qpExitBtn" type="button">Exit</button>
+            <div style="display:flex;gap:8px">
+              <button class="mini-btn" id="qpPrevBtn" type="button">Previous</button>
+              <button class="mini-btn" id="qpNextBtn" type="button">Skip</button>
+              <button class="mini-btn" id="qpExitBtn" type="button">Exit</button>
+            </div>
           </div>
           <div class="practice-content">
             <h3 id="qpQuestionText">Loading...</h3>
             <div class="meta" style="margin-bottom:12px">
               <span class="chip" id="qpCategoryDisplay">Category</span>
-              <span class="chip" id="qpCountDisplay">Question 1</span>
             </div>
             <div class="answer-input-panel">
               <input type="text" class="answer-input" id="qpAnswerInput" placeholder="Type your answer here..." autocomplete="off" />
@@ -203,6 +206,10 @@ body{margin:0;font-family:"Space Grotesk","IBM Plex Sans","Segoe UI",sans-serif;
             <div class="meta">
               <span class="chip" id="scCategoryDisplay">Category</span>
               <span class="chip" id="scTimerDisplay">2:00</span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="mini-btn" id="scPrevBtn" type="button">Previous</button>
+              <button class="mini-btn" id="scNextBtn" type="button">Skip</button>
             </div>
           </div>
           <div class="practice-content">
@@ -297,29 +304,6 @@ body{margin:0;font-family:"Space Grotesk","IBM Plex Sans","Segoe UI",sans-serif;
         <div class="control" id="timerControl">
           <label for="timerMinutesInput">Timer (minutes/question)</label>
           <input id="timerMinutesInput" type="number" min="1" max="120" step="1" value="3" />
-        </div>
-      </section>
-
-      <section class="controls import-panel hidden" id="aiImportPanel">
-        <div class="control">
-          <label for="paperUploadInput">Question Paper File</label>
-          <input id="paperUploadInput" type="file" accept=".txt,.md,.csv,.json,.pdf,image/*,application/pdf" />
-        </div>
-        <div class="control">
-          <label>&nbsp;</label>
-          <button id="aiImportBtn" class="mini-btn" type="button">AI Import Questions</button>
-        </div>
-        <div class="control">
-          <label>&nbsp;</label>
-          <button id="clearImportedBtn" class="mini-btn" type="button">Clear Imported</button>
-        </div>
-        <div class="control">
-          <label>&nbsp;</label>
-          <button id="exportCombinedBtn" class="mini-btn" type="button">Export Combined JSON</button>
-        </div>
-        <div class="control control--grow">
-          <label>Import Status</label>
-          <div id="aiImportStatus" class="status-box">Idle</div>
         </div>
       </section>
 

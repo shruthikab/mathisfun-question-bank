@@ -1,7 +1,6 @@
 const state = {
   role: "student",
   data: [],
-  importedData: [],
   loaded: false,
   error: "",
   paper: "all",
@@ -49,12 +48,6 @@ const timerMinutesInput = document.getElementById("timerMinutesInput");
 const studyModeControl = document.getElementById("studyModeControl");
 const timerControl = document.getElementById("timerControl");
 const practiceBackdrop = document.getElementById("practiceBackdrop");
-const aiImportPanel = document.getElementById("aiImportPanel");
-const paperUploadInput = document.getElementById("paperUploadInput");
-const aiImportBtn = document.getElementById("aiImportBtn");
-const clearImportedBtn = document.getElementById("clearImportedBtn");
-const exportCombinedBtn = document.getElementById("exportCombinedBtn");
-const aiImportStatus = document.getElementById("aiImportStatus");
 
 const solutionMap = window.MATHISFUN_SOLUTIONS || {};
 const STORAGE_KEYS = {
@@ -64,7 +57,6 @@ const STORAGE_KEYS = {
   viewModeLegacy: "mathisfun-view-mode",
   timer: "mathquest-timer-minutes",
   timerLegacy: "mathisfun-timer-minutes",
-  imported: "mathquest-imported-questions",
   progress: "mathquest-progress",
   bestStreak: "mathquest-best-streak",
 };
@@ -228,7 +220,7 @@ const getSolutionText = (item) => {
   return `Method:\n${item.hint}\n\nFinal answer: ${item.answer}`;
 };
 
-const getAllQuestions = () => [...state.data, ...state.importedData];
+const getAllQuestions = () => state.data;
 
 const matchesSearch = (item, query) => {
   if (!query) return true;
@@ -283,12 +275,6 @@ const refreshFiltersAndStats = () => {
     state.category
   );
   state.category = categoryFilter.value;
-};
-
-const setStatus = (text, tone = "info") => {
-  if (!aiImportStatus) return;
-  aiImportStatus.textContent = text;
-  aiImportStatus.dataset.tone = tone;
 };
 
 const setTimerMinutes = (minutes) => {
@@ -635,170 +621,6 @@ const render = () => {
   });
 };
 
-const persistImportedData = () => {
-  localStorage.setItem(STORAGE_KEYS.imported, JSON.stringify(state.importedData));
-};
-
-const loadImportedData = () => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.imported);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) state.importedData = parsed;
-  } catch {
-    state.importedData = [];
-  }
-};
-
-const generateImportId = (index, existingIds) => {
-  const date = new Date();
-  const stamp = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(
-    date.getDate()
-  ).padStart(2, "0")}`;
-
-  let i = index + 1;
-  let id = `AI_${stamp}_${String(i).padStart(3, "0")}`;
-  while (existingIds.has(id)) {
-    i += 1;
-    id = `AI_${stamp}_${String(i).padStart(3, "0")}`;
-  }
-  return id;
-};
-
-const normalizeImportedQuestions = (rows) => {
-  const existingIds = new Set(getAllQuestions().map((q) => q.id));
-
-  return rows
-    .map((r, idx) => {
-      const question = String(r.question || r.prompt || "").trim();
-      if (!question) return null;
-
-      let id = String(r.id || "").trim();
-      if (!id || existingIds.has(id)) {
-        id = generateImportId(idx, existingIds);
-      }
-      existingIds.add(id);
-
-      return {
-        id,
-        paper: String(r.paper || "Imported Paper").trim() || "Imported Paper",
-        category: String(r.category || "General").trim() || "General",
-        question,
-        hint: String(r.hint || "").trim(),
-        answer: String(r.answer || "").trim(),
-      };
-    })
-    .filter(Boolean);
-};
-
-const readFileAsText = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file as text."));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsText(file);
-  });
-
-const readFileAsDataUrl = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file as image."));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
-
-const parseQuestionsWithAIService = async (file) => {
-  const isImage = file.type.startsWith("image/");
-  const isPdf =
-    file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-  const content = isImage || isPdf ? await readFileAsDataUrl(file) : await readFileAsText(file);
-
-  const response = await fetch("/api/import-questions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      fileName: file.name,
-      isImage,
-      isPdf,
-      content,
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`AI import failed (${response.status}): ${err.slice(0, 300)}`);
-  }
-
-  const payload = await response.json();
-  if (!Array.isArray(payload.questions)) {
-    throw new Error("AI import service returned invalid response.");
-  }
-  return payload.questions;
-};
-
-const handleAiImport = async () => {
-  const file = paperUploadInput.files?.[0];
-  if (!file) {
-    setStatus("Choose a file first.", "error");
-    return;
-  }
-
-  try {
-    aiImportBtn.disabled = true;
-    setStatus("Reading and parsing file...", "info");
-
-    let parsed;
-    if (file.name.toLowerCase().endsWith(".json")) {
-      const text = await readFileAsText(file);
-      parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) {
-        throw new Error("JSON file must contain an array of question objects.");
-      }
-    } else {
-      setStatus("Sending file to server-side AI import...", "info");
-      parsed = await parseQuestionsWithAIService(file);
-    }
-
-    const normalized = normalizeImportedQuestions(parsed);
-    if (!normalized.length) {
-      throw new Error("No valid questions were extracted.");
-    }
-
-    state.importedData = [...state.importedData, ...normalized];
-    persistImportedData();
-    refreshFiltersAndStats();
-    render();
-
-    setStatus(`Imported ${normalized.length} question(s).`, "success");
-  } catch (error) {
-    setStatus(error.message, "error");
-  } finally {
-    aiImportBtn.disabled = false;
-  }
-};
-
-const clearImportedQuestions = () => {
-  state.importedData = [];
-  persistImportedData();
-  refreshFiltersAndStats();
-  render();
-  setStatus("Cleared imported questions.", "info");
-};
-
-const exportCombinedQuestions = () => {
-  const all = getAllQuestions();
-  const blob = new Blob([JSON.stringify(all, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "mathquest-questions-combined.json";
-  a.click();
-  URL.revokeObjectURL(url);
-  setStatus("Exported combined JSON.", "success");
-};
-
 const setRole = (role) => {
   state.role = role;
   roleButtons.forEach((btn) => {
@@ -809,7 +631,6 @@ const setRole = (role) => {
   const isAdmin = role === "admin";
   studyModeControl.classList.toggle("hidden", !isStudent);
   timerControl.classList.toggle("hidden", !isStudent);
-  aiImportPanel.classList.toggle("hidden", !isAdmin);
 
   if (!isStudent) {
     stopTimer();
@@ -855,7 +676,6 @@ const init = async () => {
     return;
   }
 
-  loadImportedData();
   loadRole();
   loadProgress();
   setRole(state.role);
@@ -950,9 +770,9 @@ searchInput.addEventListener("input", (event) => {
   render();
 });
 
-aiImportBtn.addEventListener("click", handleAiImport);
-clearImportedBtn.addEventListener("click", clearImportedQuestions);
-exportCombinedBtn.addEventListener("click", exportCombinedQuestions);
+// Remove import panel references since it's been removed
+const aiImportPanel = document.getElementById("aiImportPanel");
+if (aiImportPanel) aiImportPanel.remove();
 
 // Export init function for auth.js to call
 window.init = init;
@@ -1012,18 +832,59 @@ const setGameMode = (mode) => {
 
 // ============= QUICK PRACTICE =============
 
+let quickPracticeQuestions = [];
 let quickPracticeQuestion = null;
 let quickPracticeAnswerTime = 0;
+let quickPracticeQuestionIndex = 0;
 
 const startQuickPractice = () => {
   state.quickPracticeActive = true;
   state.quickPracticeScore = 0;
   state.quickPracticeTotal = 0;
   state.quickPracticeStreak = 0;
+  quickPracticeQuestions = [];
   quickPracticeQuestion = null;
+  quickPracticeQuestionIndex = 0;
 
+  // Pre-load 20 random questions for the session
+  const allQuestions = getAllQuestions();
+  for (let i = 0; i < Math.min(20, allQuestions.length); i++) {
+    const q = getRandomQuestion(state.category !== "all" ? state.category : null);
+    if (q && !quickPracticeQuestions.find((x) => x.id === q.id)) {
+      quickPracticeQuestions.push(q);
+    }
+  }
+
+  // Setup button handlers
   document.getElementById("qpExitBtn")?.addEventListener("click", () => {
     setGameMode("browse");
+  });
+
+  document.getElementById("qpPrevBtn")?.addEventListener("click", () => {
+    if (quickPracticeQuestionIndex > 0) {
+      quickPracticeQuestionIndex--;
+      quickPracticeQuestion = quickPracticeQuestions[quickPracticeQuestionIndex];
+      showQuickPracticeQuestion();
+    }
+  });
+
+  document.getElementById("qpNextBtn")?.addEventListener("click", () => {
+    if (quickPracticeQuestionIndex < quickPracticeQuestions.length - 1) {
+      quickPracticeQuestionIndex++;
+      quickPracticeQuestion = quickPracticeQuestions[quickPracticeQuestionIndex];
+      showQuickPracticeQuestion();
+    } else {
+      // Load more questions
+      for (let i = 0; i < 10; i++) {
+        const q = getRandomQuestion(state.category !== "all" ? state.category : null);
+        if (q && !quickPracticeQuestions.find((x) => x.id === q.id)) {
+          quickPracticeQuestions.push(q);
+        }
+      }
+      quickPracticeQuestionIndex++;
+      quickPracticeQuestion = quickPracticeQuestions[quickPracticeQuestionIndex];
+      showQuickPracticeQuestion();
+    }
   });
 
   document.getElementById("qpSubmitBtn")?.addEventListener("click", submitQuickPracticeAnswer);
@@ -1034,21 +895,29 @@ const startQuickPractice = () => {
   loadQuickPracticeQuestion();
 };
 
+const showQuickPracticeQuestion = () => {
+  if (!quickPracticeQuestion) return;
+
+  document.getElementById("qpQuestionText").innerHTML = formatMath(quickPracticeQuestion.question);
+  document.getElementById("qpCategoryDisplay").textContent = quickPracticeQuestion.category;
+  document.getElementById("qpStreakDisplay").textContent = `Streak: ${state.quickPracticeStreak}`;
+  document.getElementById("qpAnswerInput").value = "";
+  document.getElementById("qpFeedback").classList.add("hidden");
+  document.getElementById("qpSubmitBtn").disabled = false;
+  document.getElementById("qpAnswerInput").focus();
+  document.getElementById("qpPrevBtn").disabled = quickPracticeQuestionIndex === 0;
+  quickPracticeAnswerTime = Date.now();
+};
+
 const loadQuickPracticeQuestion = () => {
-  quickPracticeQuestion = getRandomQuestion(state.category !== "all" ? state.category : null);
-  if (!quickPracticeQuestion) {
+  if (quickPracticeQuestions.length === 0) {
     document.getElementById("qpQuestionText").textContent = "No questions available!";
     return;
   }
 
-  document.getElementById("qpQuestionText").innerHTML = formatMath(quickPracticeQuestion.question);
-  document.getElementById("qpCategoryDisplay").textContent = quickPracticeQuestion.category;
-  document.getElementById("qpCountDisplay").textContent = `Question ${state.quickPracticeTotal + 1}`;
-  document.getElementById("qpStreakDisplay").textContent = `Streak: ${state.quickPracticeStreak}`;
-  document.getElementById("qpAnswerInput").value = "";
-  document.getElementById("qpFeedback").classList.add("hidden");
-  document.getElementById("qpAnswerInput").focus();
-  quickPracticeAnswerTime = Date.now();
+  quickPracticeQuestionIndex = 0;
+  quickPracticeQuestion = quickPracticeQuestions[0];
+  showQuickPracticeQuestion();
 };
 
 const submitQuickPracticeAnswer = () => {
@@ -1086,10 +955,28 @@ const submitQuickPracticeAnswer = () => {
 
   document.getElementById("qpSubmitBtn").disabled = true;
 
+  // Auto-advance to next question after feedback
   setTimeout(() => {
     document.getElementById("qpSubmitBtn").disabled = false;
-    loadQuickPracticeQuestion();
-  }, correct ? 1500 : 2500);
+    if (quickPracticeQuestionIndex < quickPracticeQuestions.length - 1) {
+      quickPracticeQuestionIndex++;
+      quickPracticeQuestion = quickPracticeQuestions[quickPracticeQuestionIndex];
+      showQuickPracticeQuestion();
+    } else {
+      // Load more questions
+      for (let i = 0; i < 10; i++) {
+        const q = getRandomQuestion(state.category !== "all" ? state.category : null);
+        if (q && !quickPracticeQuestions.find((x) => x.id === q.id)) {
+          quickPracticeQuestions.push(q);
+        }
+      }
+      if (quickPracticeQuestionIndex < quickPracticeQuestions.length - 1) {
+        quickPracticeQuestionIndex++;
+        quickPracticeQuestion = quickPracticeQuestions[quickPracticeQuestionIndex];
+      }
+      showQuickPracticeQuestion();
+    }
+  }, correct ? 1200 : 2000);
 };
 
 const normalizeAnswer = (answer) => {
@@ -1113,6 +1000,7 @@ const updateQuickPracticeScore = () => {
 
 let skillCheckCategory = null;
 let skillCheckTimeLimit = 120;
+let skillCheckAnswers = {}; // Track which questions have been answered
 
 const renderSkillCheckCategories = () => {
   const grid = document.getElementById("skillCategoryGrid");
@@ -1138,6 +1026,7 @@ const renderSkillCheckCategories = () => {
   });
 
   document.getElementById("scExitBtn")?.addEventListener("click", () => {
+    stopSkillCheckTimer();
     setGameMode("browse");
   });
 };
@@ -1158,6 +1047,7 @@ const startSkillCheck = (category) => {
   state.skillCheckIndex = 0;
   state.skillCheckScore = 0;
   skillCheckTimeLimit = 120;
+  skillCheckAnswers = {};
 
   document.getElementById("skillCheckPanel").classList.add("hidden");
   document.getElementById("skillCheckActivePanel").classList.remove("hidden");
@@ -1167,6 +1057,21 @@ const startSkillCheck = (category) => {
     stopSkillCheckTimer();
     setGameMode("browse");
   });
+
+  document.getElementById("scPrevBtn")?.addEventListener("click", () => {
+    if (state.skillCheckIndex > 0) {
+      state.skillCheckIndex--;
+      showSkillCheckQuestion();
+    }
+  });
+
+  document.getElementById("scNextBtn")?.addEventListener("click", () => {
+    if (state.skillCheckIndex < skillCheckQuestions.length - 1) {
+      state.skillCheckIndex++;
+      showSkillCheckQuestion();
+    }
+  });
+
   document.getElementById("scSubmitBtn")?.addEventListener("click", submitSkillCheckAnswer);
   document.getElementById("scAnswerInput")?.addEventListener("keypress", (e) => {
     if (e.key === "Enter") submitSkillCheckAnswer();
@@ -1205,7 +1110,7 @@ const stopSkillCheckTimer = () => {
   }
 };
 
-const loadSkillCheckQuestion = () => {
+const showSkillCheckQuestion = () => {
   const q = skillCheckQuestions[state.skillCheckIndex];
   if (!q) {
     endSkillCheck();
@@ -1216,7 +1121,27 @@ const loadSkillCheckQuestion = () => {
   document.getElementById("scProgressDisplay").textContent = `Question ${state.skillCheckIndex + 1} of ${skillCheckQuestions.length}`;
   document.getElementById("scAnswerInput").value = "";
   document.getElementById("scFeedback").classList.add("hidden");
+  document.getElementById("scSubmitBtn").disabled = skillCheckAnswers[state.skillCheckIndex];
   document.getElementById("scAnswerInput").focus();
+  document.getElementById("scPrevBtn").disabled = state.skillCheckIndex === 0;
+  document.getElementById("scNextBtn").disabled = state.skillCheckIndex === skillCheckQuestions.length - 1;
+
+  // If already answered, show the feedback
+  if (skillCheckAnswers[state.skillCheckIndex] !== undefined) {
+    const feedback = document.getElementById("scFeedback");
+    feedback.classList.remove("hidden");
+    if (skillCheckAnswers[state.skillCheckIndex]) {
+      feedback.className = "result-feedback correct";
+      feedback.textContent = "✓ Correct!";
+    } else {
+      feedback.className = "result-feedback incorrect";
+      feedback.innerHTML = `✗ Answer: <strong>${q.answer}</strong>`;
+    }
+  }
+};
+
+const loadSkillCheckQuestion = () => {
+  showSkillCheckQuestion();
 };
 
 const submitSkillCheckAnswer = () => {
@@ -1232,6 +1157,7 @@ const submitSkillCheckAnswer = () => {
     state.skillCheckScore++;
   }
 
+  skillCheckAnswers[state.skillCheckIndex] = correct;
   recordAnswer(correct, q.category);
 
   const feedback = document.getElementById("scFeedback");
@@ -1245,12 +1171,6 @@ const submitSkillCheckAnswer = () => {
   }
 
   document.getElementById("scSubmitBtn").disabled = true;
-
-  setTimeout(() => {
-    document.getElementById("scSubmitBtn").disabled = false;
-    state.skillCheckIndex++;
-    loadSkillCheckQuestion();
-  }, correct ? 1000 : 2000);
 };
 
 const endSkillCheck = () => {
