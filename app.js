@@ -2254,12 +2254,12 @@ const endMemoryMatch = () => {
   alert(`Great job! You completed Memory Match in ${arcadeState.memoryMatch.timeElapsed} seconds!`);
 };
 
-// Number Burst Game - Simple: find the target number
+// Number Burst Game - Mental math: solve equations to find the answer
 const startNumberBurst = () => {
   arcadeState.numberBurst.active = true;
   arcadeState.numberBurst.score = 0;
   arcadeState.numberBurst.lives = 3;
-  arcadeState.numberBurst.target = 10;
+  arcadeState.numberBurst.answer = 10;
   arcadeState.numberBurst.difficulty = 1;
 
   document.getElementById("arcadeGamesPanel")?.classList.add("hidden");
@@ -2272,25 +2272,70 @@ const startNumberBurst = () => {
 
 const updateNumberBurstTarget = () => {
   const diff = arcadeState.numberBurst.difficulty;
-  // Generate a target number to find
-  arcadeState.numberBurst.target = Math.floor(Math.random() * 15 * diff) + 5;
-  document.getElementById("nbTargetText").textContent = `FIND: ${arcadeState.numberBurst.target}`;
+  // Generate target answer based on difficulty
+  arcadeState.numberBurst.answer = Math.floor(Math.random() * 10 * diff) + 5;
+  // Generate a math problem whose answer is the target
+  const problemTypes = ['add', 'subtract', 'multiply'];
+  const problemType = problemTypes[Math.floor(Math.random() * problemTypes.length)];
+
+  let a, b, symbol;
+  if (problemType === 'add') {
+    a = Math.floor(Math.random() * (5 * diff)) + 1;
+    b = arcadeState.numberBurst.answer - a;
+    symbol = '+';
+  } else if (problemType === 'multiply') {
+    // Find factors of the answer
+    const factors = [];
+    for (let i = 2; i <= Math.sqrt(arcadeState.numberBurst.answer); i++) {
+      if (arcadeState.numberBurst.answer % i === 0) {
+        factors.push([i, arcadeState.numberBurst.answer / i]);
+      }
+    }
+    if (factors.length > 0 && Math.random() > 0.3) {
+      [a, b] = factors[Math.floor(Math.random() * factors.length)];
+      symbol = '×';
+    } else {
+      // Fall back to addition
+      a = Math.floor(Math.random() * (5 * diff)) + 1;
+      b = arcadeState.numberBurst.answer - a;
+      symbol = '+';
+    }
+  } else {
+    // Subtract
+    a = arcadeState.numberBurst.answer + Math.floor(Math.random() * (5 * diff)) + 1;
+    b = a - arcadeState.numberBurst.answer;
+    symbol = '-';
+  }
+
+  arcadeState.numberBurst.problem = `${a} ${symbol} ${b}`;
+  document.getElementById("nbTargetText").textContent = `${arcadeState.numberBurst.problem} = ?`;
 };
 
 const generateNumberBurstNumbers = () => {
   const container = document.getElementById("numberBurstGrid");
   arcadeState.numberBurst.numbers = [];
-  const target = arcadeState.numberBurst.target;
+  const answer = arcadeState.numberBurst.answer;
+
+  // Ensure at least 4 bubbles have the correct answer
+  const targetIndices = new Set();
+  while (targetIndices.size < 4) {
+    targetIndices.add(Math.floor(Math.random() * 20));
+  }
 
   for (let i = 0; i < 20; i++) {
     let num;
-    // 25% chance to be the target (correct answer)
-    if (Math.random() < 0.25) {
-      num = target;
+    if (targetIndices.has(i)) {
+      // This is a guaranteed correct answer
+      num = answer;
     } else {
-      // Generate random numbers near the target
-      const offset = Math.floor(Math.random() * 10) - 5;
-      num = Math.max(1, target + offset);
+      // Generate wrong answers near the correct one (common mistakes)
+      const offsets = [-3, -2, -1, 1, 2, 3, -5, 5];
+      const offset = offsets[Math.floor(Math.random() * offsets.length)];
+      num = Math.max(1, answer + offset);
+      // Make sure it's not accidentally the answer
+      if (num === answer) {
+        num = num === 1 ? 2 : num - 1;
+      }
     }
     arcadeState.numberBurst.numbers.push(num);
   }
@@ -2303,17 +2348,20 @@ const generateNumberBurstNumbers = () => {
 const catchNumberBurst = (index) => {
   const btns = document.querySelectorAll(".number-burst-btn");
   const num = arcadeState.numberBurst.numbers[index];
-  const target = arcadeState.numberBurst.target;
+  const answer = arcadeState.numberBurst.answer;
 
-  if (num === target) {
-    // Correct! Found the target number
+  if (num === answer) {
+    // Correct! Found the right answer
     arcadeState.numberBurst.score++;
     btns[index].style.background = "rgba(158, 206, 106, 0.3)";
     btns[index].style.borderColor = "var(--success)";
 
     // Generate new number for this spot
     setTimeout(() => {
-      const newNum = Math.floor(Math.random() * 30) + 1;
+      const offsets = [-3, -2, -1, 1, 2, 3];
+      const offset = offsets[Math.floor(Math.random() * offsets.length)];
+      let newNum = answer + offset;
+      if (newNum === answer) newNum = answer + 1;
       arcadeState.numberBurst.numbers[index] = newNum;
       btns[index].textContent = newNum;
       btns[index].style.background = "";
@@ -2327,7 +2375,7 @@ const catchNumberBurst = (index) => {
       generateNumberBurstNumbers();
     }
   } else {
-    // Wrong number!
+    // Wrong answer!
     arcadeState.numberBurst.lives--;
     btns[index].classList.add("caught");
     setTimeout(() => btns[index].classList.remove("caught"), 300);
@@ -2549,7 +2597,7 @@ const spawnEquation = () => {
 
   const el = document.createElement("div");
   el.className = "rain-equation";
-  el.textContent = problem.question;
+  el.innerHTML = problem.question; // Use innerHTML to render formatted math (fractions, etc.)
   el.style.left = `${equation.x}%`;
   el.style.top = `${equation.y}px`;
   el.onclick = () => solveEquation(equation);
